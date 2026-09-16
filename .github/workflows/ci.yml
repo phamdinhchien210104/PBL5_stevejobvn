@@ -1,0 +1,35 @@
+name: ESP-IDF Multi-Target CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-firmware:
+    name: Build (${{ matrix.target }} / ${{ matrix.example }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ esp32s3, esp32c3 ]
+        example: [ 1_blink ]
+    container:
+      image: espressif/idf:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build with ESP-IDF
+        run: |
+          . $IDF_PATH/export.sh
+          cd device_firmware/${{ matrix.example }}
+          idf.py set-target ${{ matrix.target }}
+          idf.py build

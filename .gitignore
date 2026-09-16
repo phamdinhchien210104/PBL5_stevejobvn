@@ -66,12 +66,27 @@ dkms.conf
 # MacOS directory files
 .DS_Store
 
-# Application project files
+# Application project files & ESP-IDF build artifacts
 **/sdkconfig
 **/sdkconfig.old
-**/build
+**/sdkconfig.ci
+**/build/
+**/managed_components/
+**/dependencies.lock
+bootloader/
+partition_table/
 
 # Doc build artifacts
 docs/*/*/_build/
 docs/*/*/sphinx-warning-log.txt
 docs/*/*/sphinx-warning-log-sanitized.txt
+
+# Local IDE & Agents
+.vscode/*.log
+.codegraph/
+.agents/
+AGENTS.md
+skills-lock.json
+
+# Windows NTFS sanitization artifacts
+*Array_String_+CombinedString.swift

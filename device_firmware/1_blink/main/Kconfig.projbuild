@@ -2,11 +2,17 @@ menu "Example Configuration"
 
     config BLINK_GPIO
         int "Blink GPIO number"
-        range 0 21
+        range 0 48 if IDF_TARGET_ESP32S3
+        range 0 21 if IDF_TARGET_ESP32C3
+        range 0 48
+        default 48 if IDF_TARGET_ESP32S3
+        default 5 if IDF_TARGET_ESP32C3
         default 5
         help
             GPIO number (IOxx) to blink on and off.
 
-            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+            On ESP32-S3 DevKit boards, GPIO 48 is commonly connected to RGB LED, or discrete GPIOs.
+            On ESP32-C3 DevKit boards, GPIO 5 (or GPIO 8) is commonly used.
 
 endmenu
+
