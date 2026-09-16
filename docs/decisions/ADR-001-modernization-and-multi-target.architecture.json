@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ADR-001: Modernization & Multi-Target Architecture",
+    "output": "ADR-001-modernization-and-multi-target.html",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "viewBox": [1300, 520],
+    "views": [
+      {
+        "id": "multi-target-flow",
+        "label": "Multi-Target Build Flow",
+        "focus": ["dev", "workspace", "extension", "kconfig", "xtensa_gcc", "riscv_gcc", "target_s3", "target_c3"],
+        "note": "Seamless switching between ESP32-S3 and ESP32-C3 targets on a shared codebase."
+      },
+      {
+        "id": "gcc-crash-fix",
+        "label": "Compiler Fix & Pruning",
+        "focus": ["workspace", "extension", "cmake", "xtensa_gcc", "riscv_gcc"],
+        "note": "set(COMPONENTS main) prevents GCC 15 ICE crash on esp_lcd and halves build time."
+      },
+      {
+        "id": "devops-ci",
+        "label": "DevOps & CI/CD Pipeline",
+        "focus": ["dev", "git", "github_ci", "cmake"],
+        "note": "Automated GitHub Actions matrix verifies both chip targets on every push."
+      }
+    ]
+  },
+  "components": [
+    { "id": "dev", "type": "external", "label": "Engineering Team", "sublabel": "S3 & C3 Developers", "pos": [40, 190], "size": [130, 60] },
+    { "id": "git", "type": "security", "label": "Git Repository", "sublabel": "Conventional Commits", "pos": [40, 390], "size": [130, 60] },
+    { "id": "workspace", "type": "frontend", "label": "Multi-Root Workspace", "sublabel": "pbl5.code-workspace", "pos": [250, 190], "size": [140, 60] },
+    { "id": "extension", "type": "frontend", "label": "ESP-IDF Extension", "sublabel": "Activation: always", "pos": [460, 190], "size": [140, 60] },
+    { "id": "kconfig", "type": "backend", "label": "Target Config", "sublabel": "sdkconfig.defaults.*", "pos": [710, 100], "size": [135, 60] },
+    { "id": "cmake", "type": "backend", "label": "CMake Pruning", "sublabel": "set(COMPONENTS main)", "pos": [710, 280], "size": [135, 60] },
+    { "id": "xtensa_gcc", "type": "backend", "label": "Xtensa Toolchain", "sublabel": "GCC 15.2.0 (Dual-Core)", "pos": [910, 100], "size": [145, 60] },
+    { "id": "riscv_gcc", "type": "backend", "label": "RISC-V Toolchain", "sublabel": "Fixed GNU Binutils", "pos": [910, 280], "size": [145, 60] },
+    { "id": "target_s3", "type": "external", "label": "ESP32-S3 Hardware", "sublabel": "Xtensa LX7 @ 240MHz", "pos": [1120, 100], "size": [135, 60] },
+    { "id": "target_c3", "type": "external", "label": "ESP32-C3 Hardware", "sublabel": "RISC-V @ 160MHz", "pos": [1120, 280], "size": [135, 60] },
+    { "id": "github_ci", "type": "cloud", "label": "GitHub Actions CI", "sublabel": "Dual-Target Matrix", "pos": [350, 390], "size": [140, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Antigravity IDE & Extension Layer", "wraps": ["workspace", "extension"] },
+    { "kind": "region", "label": "Modern ESP-IDF v6.0.2 Build Core", "wraps": ["kconfig", "cmake", "xtensa_gcc", "riscv_gcc"] },
+    { "kind": "region", "label": "Hardware Deployment Targets", "wraps": ["target_s3", "target_c3"] },
+    { "kind": "region", "label": "DevOps & CI Automation", "wraps": ["git", "github_ci"] }
+  ],
+  "connections": [
+    { "id": "dev-to-workspace", "from": "dev", "to": "workspace", "label": "Open Chapter", "fromSide": "right", "toSide": "left" },
+    { "id": "workspace-to-ext", "from": "workspace", "to": "extension", "label": "Recognize", "fromSide": "right", "toSide": "left" },
+    { "id": "ext-to-kconfig", "from": "extension", "to": "kconfig", "label": "Set Device", "fromSide": "right", "toSide": "left" },
+    { "id": "ext-to-cmake", "from": "extension", "to": "cmake", "label": "Invoke Build", "fromSide": "right", "toSide": "left" },
+    { "id": "kconfig-to-xtensa", "from": "kconfig", "to": "xtensa_gcc", "label": "Build S3", "fromSide": "right", "toSide": "left" },
+    { "id": "cmake-to-riscv", "from": "cmake", "to": "riscv_gcc", "label": "Build C3", "fromSide": "right", "toSide": "left" },
+    { "id": "xtensa-to-s3", "from": "xtensa_gcc", "to": "target_s3", "label": "Flash & Log", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "riscv-to-c3", "from": "riscv_gcc", "to": "target_c3", "label": "Flash & Log", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "dev-to-git", "from": "dev", "to": "git", "label": "Commit", "labelDy": 24, "fromSide": "bottom", "toSide": "top" },
+    { "id": "git-to-ci", "from": "git", "to": "github_ci", "label": "Push main", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "ci-to-cmake", "from": "github_ci", "to": "cmake", "label": "Matrix Verify", "variant": "dashed", "fromSide": "right", "toSide": "bottom" }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Vấn đề tồn đọng (Legacy Problems)",
+      "items": [
+        "Monorepo 7 chapter khiến Extension không nhận diện dự án",
+        "GCC 15.2.0 crash Segfault trên esp_lcd khi build mặc định",
+        "Gói RISC-V Windows hỏng linker ld, thiếu đa mục tiêu cho S3"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Giải pháp hiện đại hóa (ADR-001 Decisions)",
+      "items": [
+        "pbl5.code-workspace kích hoạt độc lập từng chapter con",
+        "set(COMPONENTS main) tăng 50% tốc độ build & sửa crash",
+        "Bổ sung GNU binutils chuẩn, tách cấu hình theo target"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Tự động hóa & Kiểm soát (DevOps Standards)",
+      "items": [
+        "GitHub Actions CI chạy Matrix Build kiểm tra cả 2 chip",
+        "Trunk-Based Development với chuẩn Conventional Commits",
+        "Bảo vệ .gitignore ngăn rò rỉ cấu hình và cache build"
+      ]
+    }
+  ]
+}

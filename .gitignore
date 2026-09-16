@@ -80,6 +80,7 @@ partition_table/
 docs/*/*/_build/
 docs/*/*/sphinx-warning-log.txt
 docs/*/*/sphinx-warning-log-sanitized.txt
+*.visual-check.*
 
 # Local IDE & Agents
 .vscode/*.log
