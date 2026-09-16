@@ -87,6 +87,4 @@ docs/*/*/sphinx-warning-log-sanitized.txt
 .agents/
 AGENTS.md
 skills-lock.json
-
-# Windows NTFS sanitization artifacts
-*Array_String_+CombinedString.swift
+**/.clangd*
