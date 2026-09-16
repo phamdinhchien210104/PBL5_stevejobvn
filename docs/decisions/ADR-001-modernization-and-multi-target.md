@@ -3,6 +3,7 @@
 - **Trạng thái**: Đã phê duyệt (Accepted)
 - **Ngày quyết định**: 2026-09-16
 - **Phạm vi**: Toàn bộ dự án (Root, Toolchain, CI/CD, Module `1_blink` & `2_light_drivers`)
+- **Sơ đồ kiến trúc tương tác (Archify)**: [Xem sơ đồ trực quan (HTML)](./diagrams/ADR-001-modernization-and-multi-target.html)
 
 ---
 
