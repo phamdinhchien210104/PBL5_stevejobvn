@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en" data-theme="dark" data-preset="classic">
 <head>
   <meta charset="UTF-8">
@@ -565,6 +565,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         color-mix(in srgb, var(--toolbar-menu-bg) 92%, transparent);
       color: var(--toolbar-text);
       box-shadow: 0 14px 42px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+      -webkit-backdrop-filter: blur(16px);
       backdrop-filter: blur(16px);
       pointer-events: none;
       animation: archify-share-cue-enter 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -575,6 +576,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         linear-gradient(90deg, color-mix(in srgb, var(--frontend-fill) 46%, transparent), transparent 36%),
         var(--toolbar-menu-bg);
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+      -webkit-backdrop-filter: none;
       backdrop-filter: none;
     }
     html[data-preset="editorial"] .share-chapter-cue {
@@ -583,6 +585,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         linear-gradient(90deg, color-mix(in srgb, var(--security-fill) 58%, transparent), transparent 42%),
         var(--toolbar-menu-bg);
       box-shadow: 0 10px 30px color-mix(in srgb, #000 18%, transparent);
+      -webkit-backdrop-filter: none;
       backdrop-filter: none;
     }
     html[data-preset="editorial"] .share-chapter-state { color: var(--arrow-emphasis); }
@@ -1036,7 +1039,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     }
     .diagram-container.is-camera-transaction svg { transition: none; }
     .diagram-container.is-pannable { cursor: grab; }
-    .diagram-container.is-panning { cursor: grabbing; user-select: none; }
+    .diagram-container.is-panning { cursor: grabbing; -webkit-user-select: none; user-select: none; }
     .diagram-container.is-panning svg { transition: none; }
 
     .diagram-nav {
@@ -1054,6 +1057,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       border-radius: 0.58rem;
       background: color-mix(in srgb, var(--toolbar-bg) 82%, transparent);
       box-shadow: 0 5px 14px rgba(0, 0, 0, 0.07);
+      -webkit-backdrop-filter: blur(10px);
       backdrop-filter: blur(10px);
       scrollbar-width: none;
     }
@@ -1192,6 +1196,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       background: var(--toolbar-menu-bg);
       color: var(--toolbar-text);
       box-shadow: 0 16px 42px rgba(0, 0, 0, 0.3);
+      -webkit-backdrop-filter: blur(16px);
       backdrop-filter: blur(16px);
       font-size: 0.625rem;
     }
@@ -1218,7 +1223,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       background: linear-gradient(110deg, color-mix(in srgb, var(--frontend-fill) 45%, transparent), transparent 68%);
       cursor: grab;
       touch-action: none;
-      user-select: none;
+      -webkit-user-select: none; user-select: none;
     }
     .overview-map[data-panel-dragging="true"] .overview-map-head { cursor: grabbing; }
     .overview-map[data-placement-invalid="true"] {
@@ -1439,6 +1444,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         var(--toolbar-menu-bg);
       color: var(--toolbar-text);
       box-shadow: 0 18px 52px rgba(0, 0, 0, 0.36);
+      -webkit-backdrop-filter: blur(18px);
       backdrop-filter: blur(18px);
       animation: archify-lens-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
     }
@@ -1615,6 +1621,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         var(--toolbar-menu-bg);
       color: var(--toolbar-text);
       box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
+      -webkit-backdrop-filter: blur(16px);
       backdrop-filter: blur(16px);
       font-size: 0.625rem;
     }
@@ -1783,6 +1790,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       background: var(--toolbar-menu-bg);
       color: var(--toolbar-text);
       box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
+      -webkit-backdrop-filter: blur(16px);
       backdrop-filter: blur(16px);
       font-size: 0.6875rem;
     }
@@ -2141,6 +2149,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         var(--toolbar-menu-bg);
       color: var(--toolbar-text);
       box-shadow: 0 22px 64px rgba(0, 0, 0, 0.4);
+      -webkit-backdrop-filter: blur(18px);
       backdrop-filter: blur(18px);
       animation: archify-guide-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
     }
@@ -2332,6 +2341,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       background: var(--toolbar-menu-bg);
       color: var(--toolbar-text);
       box-shadow: 0 6px 8px rgba(0, 0, 0, 0.22);
+      -webkit-backdrop-filter: blur(16px);
       backdrop-filter: blur(16px);
     }
     .node-finder[hidden] { display: none; }
@@ -2515,6 +2525,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       background: var(--toolbar-bg);
       background: linear-gradient(120deg, var(--toolbar-bg), color-mix(in srgb, var(--toolbar-bg) 82%, var(--frontend-fill)));
       box-shadow: 0 12px 36px rgba(0, 0, 0, 0.16);
+      -webkit-backdrop-filter: blur(12px);
       backdrop-filter: blur(12px);
     }
     .guided-views[hidden] { display: none; }
@@ -3200,6 +3211,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       font-weight: 500;
       cursor: pointer;
       white-space: nowrap;
+      -webkit-backdrop-filter: blur(10px);
       backdrop-filter: blur(10px);
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
       transition: background 0.15s, border-color 0.15s, color 0.15s;
@@ -3355,6 +3367,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       border-radius: 0.5rem;
       background: transparent;
       box-shadow: none;
+      -webkit-backdrop-filter: none;
       backdrop-filter: none;
       text-align: left;
     }
@@ -3578,6 +3591,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       background: transparent;
       border: 1px solid transparent;
       box-shadow: none;
+      -webkit-backdrop-filter: none;
       backdrop-filter: none;
       width: 100%;
       min-height: 3rem;

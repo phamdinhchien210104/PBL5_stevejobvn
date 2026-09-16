@@ -24,5 +24,6 @@
         "--background-index",
         "--completion-style=detailed",
         "--header-insertion=never"
-    ]
+    ],
+    "vscode-edge-devtools.webhint": false
 }
