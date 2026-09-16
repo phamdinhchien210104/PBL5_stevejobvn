@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ADR-002: Windows NTFS Git Clone Compatibility",
+    "output": "ADR-002-windows-ntfs-clone-fix.html",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "viewBox": [1300, 520],
+    "views": [
+      {
+        "id": "ntfs-barrier",
+        "label": "NTFS File System Barrier",
+        "focus": ["win_developer", "git_client", "ntfs_kernel"],
+        "note": "NTFS rejects < and > characters, causing git clone checkout crash on Windows."
+      },
+      {
+        "id": "sanitization-sync",
+        "label": "Sanitization & Xcode Sync",
+        "focus": ["rename_engine", "pbxproj_sync", "team_remote"],
+        "note": "Renamed to _String_ and synchronized 6 references in project.pbxproj."
+      },
+      {
+        "id": "cross-platform-success",
+        "label": "Cross-Platform Verification",
+        "focus": ["team_remote", "verified_clone", "mac_developer", "win_developer"],
+        "note": "Windows, macOS, and Linux developers can now clone cleanly with zero errors."
+      }
+    ]
+  },
+  "components": [
+    { "id": "upstream_repo", "type": "external", "label": "Upstream Repo", "sublabel": "Committed on macOS", "pos": [40, 90], "size": [140, 60] },
+    { "id": "mac_developer", "type": "external", "label": "macOS Developer", "sublabel": "APFS / HFS+ (OK)", "pos": [260, 90], "size": [140, 60] },
+    { "id": "win_developer", "type": "external", "label": "Windows Teammate", "sublabel": "Runs git clone", "pos": [40, 240], "size": [140, 60] },
+    { "id": "git_client", "type": "frontend", "label": "Git for Windows", "sublabel": "core.protectNTFS", "pos": [260, 240], "size": [140, 60] },
+    { "id": "ntfs_kernel", "type": "security", "label": "Windows NTFS", "sublabel": "Blocks < and > chars", "pos": [470, 240], "size": [150, 60] },
+    { "id": "rename_engine", "type": "backend", "label": "Path Sanitizer", "sublabel": "<String> -> _String_", "pos": [700, 160], "size": [150, 60] },
+    { "id": "pbxproj_sync", "type": "backend", "label": "Xcode Project Sync", "sublabel": "6 references updated", "pos": [700, 320], "size": [150, 60] },
+    { "id": "team_remote", "type": "cloud", "label": "Team GitHub Remote", "sublabel": "PBL5_stevejobvn", "pos": [920, 240], "size": [140, 60] },
+    { "id": "verified_clone", "type": "frontend", "label": "Verified Clone", "sublabel": "100% Clean Checkout", "pos": [1120, 240], "size": [140, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Upstream Baseline", "wraps": ["upstream_repo", "mac_developer"] },
+    { "kind": "region", "label": "Windows OS & Git Barrier", "wraps": ["win_developer", "git_client", "ntfs_kernel"] },
+    { "kind": "region", "label": "Sanitization & Verified Remote", "wraps": ["rename_engine", "pbxproj_sync", "team_remote", "verified_clone"] }
+  ],
+  "connections": [
+    { "id": "upstream-to-mac", "from": "upstream_repo", "to": "mac_developer", "label": "Checkout OK", "fromSide": "right", "toSide": "left" },
+    { "id": "win-to-git", "from": "win_developer", "to": "git_client", "label": "git clone", "fromSide": "right", "toSide": "left" },
+    { "id": "git-to-ntfs", "from": "git_client", "to": "ntfs_kernel", "label": "Write Path", "fromSide": "right", "toSide": "left" },
+    { "id": "ntfs-to-rename", "from": "ntfs_kernel", "to": "rename_engine", "label": "Sanitize", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "ntfs-to-pbx", "from": "ntfs_kernel", "to": "pbxproj_sync", "label": "Update Ref", "fromSide": "right", "toSide": "left" },
+    { "id": "rename-to-remote", "from": "rename_engine", "to": "team_remote", "label": "Commit", "fromSide": "right", "toSide": "left" },
+    { "id": "pbx-to-remote", "from": "pbxproj_sync", "to": "team_remote", "label": "Push main", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "remote-to-verified", "from": "team_remote", "to": "verified_clone", "label": "Clone Test", "variant": "emphasis", "fromSide": "right", "toSide": "left" }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Lỗi nguyên bản (The NTFS Conflict)",
+      "items": [
+        "macOS cho phép ký tự < và > trong tên tệp",
+        "Windows NTFS cấm tuyệt đối 9 ký tự đặc biệt",
+        "git clone văng lỗi checkout và để lại thư mục trống"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Giải pháp xử lý (Sanitization Fix)",
+      "items": [
+        "Đổi tên file sang Array_String_+CombinedString.swift",
+        "Đồng bộ 6 vị trí tham chiếu trong project.pbxproj",
+        "Bảo toàn 100% logic mã nguồn cho cả iOS và ESP-IDF"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Kiểm thử thực tế (Dry-Run Verification)",
+      "items": [
+        "Chạy thử nghiệm git clone trong thư mục tạm sạch",
+        "Clone thành công 100% trên Windows, Linux và macOS",
+        "Đã đẩy commit hoàn tất lên nhánh main"
+      ]
+    }
+  ]
+}

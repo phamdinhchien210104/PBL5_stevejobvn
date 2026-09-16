@@ -1,7 +1,8 @@
-﻿# ADR-002: Sửa lỗi không thể Git Clone trên Windows do ký tự không hợp lệ trong tên tệp
+# ADR-002: Sửa lỗi không thể Git Clone trên Windows do ký tự không hợp lệ trong tên tệp
 
 ## Trạng thái (Status)
-**Đã chấp thuận & Áp dụng** (Accepted)
+**Đã chấp thuận & Áp dụng** (Accepted)  
+- **Sơ đồ kiến trúc tương tác (Archify)**: [Xem sơ đồ trực quan (HTML)](./diagrams/ADR-002-windows-ntfs-clone-fix.html)
 
 ---
 

@@ -1,0 +1,20 @@
+{
+  "extends": ["development"],
+  "hints": {
+    "compat-api/css": "off",
+    "compat-api/html": "off",
+    "no-inline-styles": "off",
+    "axe": "off",
+    "axe/structure": "off",
+    "axe/keyboard": "off",
+    "axe/forms": "off"
+  },
+  "browserslist": [
+    "defaults",
+    "not dead",
+    "Chrome >= 121",
+    "Edge >= 121",
+    "Safari >= 17",
+    "Firefox >= 120"
+  ]
+}
