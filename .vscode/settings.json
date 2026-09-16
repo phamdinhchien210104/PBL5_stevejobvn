@@ -16,5 +16,13 @@
         "*.h": "c",
         "*.c": "c"
     },
-    "cmake.sourceDirectory": "D:/Document/PBL5_stevejobvn/device_firmware/1_blink"
+    "cmake.configureOnOpen": false,
+    "cmake.autoSelectActiveFolder": false,
+    "clangd.path": "D:\\Espressif\\tools\\esp-clang\\esp-20.1.1_20250829\\esp-clang\\bin\\clangd.exe",
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/build",
+        "--background-index",
+        "--completion-style=detailed",
+        "--header-insertion=never"
+    ]
 }
