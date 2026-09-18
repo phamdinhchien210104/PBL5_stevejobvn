@@ -16,7 +16,7 @@
 #define __LIGHT_DRIVER_H__
 
 #include "iot_led.h"
-
+#include "driver/gpio.h"
 #ifdef  __cplusplus
 extern "C" {
 #endif

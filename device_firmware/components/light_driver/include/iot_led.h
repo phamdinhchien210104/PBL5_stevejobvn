@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 #include "driver/ledc.h"
-
+#include "driver/gpio.h"
 #define HW_TIMER_GROUP (0)                                 /**< Hardware timer group */
 #define HW_TIMER_ID (0)                                    /**< Hardware timer number */
 #define HW_TIMER_DIVIDER (16)                              /**< Hardware timer clock divider */
