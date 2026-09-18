@@ -14,8 +14,11 @@
 #ifndef __IOT_BUTTON_ADC_H__
 #define __IOT_BUTTON_ADC_H__
 
-#include "driver/gpio.h"
+#if __has_include("driver/adc.h")
 #include "driver/adc.h"
+#else
+typedef int adc1_channel_t;
+#endif
 
 #ifdef __cplusplus
 extern "C" {

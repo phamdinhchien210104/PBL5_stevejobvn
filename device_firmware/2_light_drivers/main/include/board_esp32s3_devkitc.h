@@ -20,7 +20,7 @@
 #define LIGHT_BUTTON_ACTIVE_LEVEL  0
 
 #define LIGHT_WS2818_GPIO          48   /**< Built-in RGB LED on ESP32-S3-DevKitC-1 */
-#define LIGHT_WS2818_NUM_LEDS      1
+#define LIGHT_WS2818_NUM_LEDS      8
 
 /**
  * @brief Light driver Macro for ESP32-S3

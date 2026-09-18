@@ -14,6 +14,9 @@
 #ifndef __IOT_BUTTON_GPIO_H__
 #define __IOT_BUTTON_GPIO_H__
 
+#include "esp_err.h"
+#include "esp_bit_defs.h"
+/* IDF v4: driver/gpio.h | IDF v5+: esp_driver_gpio includes gpio.h transitively */
 #include "driver/gpio.h"
 
 #ifdef __cplusplus

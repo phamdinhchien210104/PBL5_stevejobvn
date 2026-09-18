@@ -1,30 +1,50 @@
-// Copyright 2017 Espressif Systems (Shanghai) PTE LTD
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+ * Smart Light Driver (WS2818/WS2812B NeoPixel Hardware Mapping with NVS Persistence)
+ * Compliant with ESP32-C3 Wireless Adventure - Chapter 6, Section 6.5
+ */
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <math.h>
 
-#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/timers.h"
 
+#include "esp_log.h"
+#include "esp_err.h"
+
 #include "light_driver.h"
+#include "ws2812_driver.h"
 #include "app_storage.h"
 
+#define TAG "light_driver"
+
+#define LIGHT_PARAM_CHECK(con) do { \
+        if (!(con)) { \
+            ESP_LOGE(TAG, "<ESP_ERR_INVALID_ARG> !(%s)", #con); \
+            return ESP_ERR_INVALID_ARG; \
+        } \
+    } while(0)
+
+#define LIGHT_ERROR_CHECK(con, err, format, ...) do { \
+        if (con) { \
+            if(*format != '\0') \
+                ESP_LOGW(TAG, "<%s> " format, esp_err_to_name(err), ##__VA_ARGS__); \
+            return err; \
+        } \
+    } while(0)
+
+#ifndef MAX
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+#endif
+#ifndef MIN
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#endif
+
 /**
- * @brief The state of the five-color light
+ * @brief Trạng thái lưu trữ của hệ thống đèn
  */
 typedef struct {
     uint8_t mode;
@@ -38,104 +58,31 @@ typedef struct {
     uint32_t blink_period_ms;
 } light_status_t;
 
-/**
- * @brief The channel of the five-color light
- */
-enum light_channel {
-    CHANNEL_ID_RED = 0,
-    CHANNEL_ID_GREEN,
-    CHANNEL_ID_BLUE,
-    CHANNEL_ID_WARM,
-    CHANNEL_ID_COLD,
-};
+#define LIGHT_STATUS_STORE_KEY "light_status"
 
-#define LIGHT_STATUS_STORE_KEY   "light_status"
-#define LIGHT_FADE_PERIOD_MAX_MS (3 * 1000)
-
-static const char *TAG               = "light_driver";
 static light_status_t g_light_status = {0};
-static bool g_light_blink_flag       = false;
-static TimerHandle_t g_fade_timer    = NULL;
-static int g_fade_mode               = MODE_NONE;
-static uint16_t g_fade_hue           = 0;
+static uint8_t s_current_r = 255;
+static uint8_t s_current_g = 255;
+static uint8_t s_current_b = 255;
 
-esp_err_t light_driver_init(light_driver_config_t *config)
-{
-    LIGHT_PARAM_CHECK(config);
+// Biến điều khiển hiệu ứng breathing / blinking
+static TimerHandle_t s_effect_timer = NULL;
+typedef enum {
+    EFFECT_NONE = 0,
+    EFFECT_BREATH,
+    EFFECT_BLINK
+} light_effect_type_t;
 
-    memset(&g_light_status, 0, sizeof(light_status_t));
+static light_effect_type_t s_active_effect = EFFECT_NONE;
+static uint8_t s_effect_base_r = 255;
+static uint8_t s_effect_base_g = 255;
+static uint8_t s_effect_base_b = 255;
+static float s_breath_elapsed_ms = 0.0f;
+static bool s_blink_state = false;
 
-    if (app_storage_get(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t)) != ESP_OK) {
-        ESP_LOGE(TAG, "Load light status failed");
-        memset(&g_light_status, 0, sizeof(light_status_t));
-        g_light_status.mode              = MODE_HSV;
-        g_light_status.on                = 1;
-        g_light_status.hue               = 360;
-        g_light_status.saturation        = 0;
-        g_light_status.value             = 100;
-        g_light_status.color_temperature = 0;
-        g_light_status.brightness        = 30;
-        g_light_status.fade_period_ms  = config->fade_period_ms;
-        g_light_status.blink_period_ms = config->blink_period_ms;
-    }
-
-    iot_led_init(LEDC_TIMER_0, LEDC_LOW_SPEED_MODE, config->freq_hz, config->clk_cfg, config->duty_resolution);
-
-    iot_led_regist_channel(CHANNEL_ID_RED, config->gpio_red);
-    iot_led_regist_channel(CHANNEL_ID_GREEN, config->gpio_green);
-    iot_led_regist_channel(CHANNEL_ID_BLUE, config->gpio_blue);
-    iot_led_regist_channel(CHANNEL_ID_WARM, config->gpio_warm);
-    iot_led_regist_channel(CHANNEL_ID_COLD, config->gpio_cold);
-
-    ESP_LOGD(TAG, "hue: %d, saturation: %d, value: %d",
-             g_light_status.hue, g_light_status.saturation, g_light_status.value);
-    ESP_LOGD(TAG, "brightness: %d, color_temperature: %d",
-             g_light_status.brightness, g_light_status.color_temperature);
-
-    return ESP_OK;
-}
-
-esp_err_t light_driver_deinit()
-{
-    esp_err_t ret = ESP_OK;
-
-    iot_led_deinit();
-
-    return ret;
-}
-
-esp_err_t light_driver_config(uint32_t fade_period_ms, uint32_t blink_period_ms)
-{
-    g_light_status.fade_period_ms = fade_period_ms;
-    g_light_status.blink_period_ms = blink_period_ms;
-
-    return ESP_OK;
-}
-
-esp_err_t light_driver_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
-{
-    esp_err_t ret = 0;
-
-    ret = iot_led_set_channel(CHANNEL_ID_RED, red, 0);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    ret = iot_led_set_channel(CHANNEL_ID_GREEN, green, 0);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    ret = iot_led_set_channel(CHANNEL_ID_BLUE, blue, 0);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    ret = iot_led_set_channel(CHANNEL_ID_WARM, 0, 0);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    ret = iot_led_set_channel(CHANNEL_ID_COLD, 0, 0);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    return ESP_OK;
-}
-
-static esp_err_t light_driver_hsv2rgb(uint16_t hue, uint8_t saturation, uint8_t value,
-                                      uint8_t *red, uint8_t *green, uint8_t *blue)
+/* Chuyển đổi màu HSV sang RGB */
+static esp_err_t hsv2rgb(uint16_t hue, uint8_t saturation, uint8_t value,
+                         uint8_t *red, uint8_t *green, uint8_t *blue)
 {
     hue = hue % 360;
     uint16_t hi = (hue / 60) % 6;
@@ -145,87 +92,255 @@ static esp_err_t light_driver_hsv2rgb(uint16_t hue, uint8_t saturation, uint8_t 
     uint16_t T = value * (10000 - saturation * (100 - F)) / 10000;
 
     switch (hi) {
-        case 0:
-            *red   = value;
-            *green = T;
-            *blue  = P;
-            break;
-
-        case 1:
-            *red   = Q;
-            *green = value;
-            *blue  = P;
-            break;
-
-        case 2:
-            *red   = P;
-            *green = value;
-            *blue  = T;
-            break;
-
-        case 3:
-            *red   = P;
-            *green = Q;
-            *blue  = value;
-            break;
-
-        case 4:
-            *red   = T;
-            *green = P;
-            *blue  = value;
-            break;
-
-        case 5:
-            *red   = value;
-            *green = P;
-            *blue  = Q;
-            break;
-
-        default:
-            return ESP_FAIL;
+        case 0: *red = value; *green = T;     *blue = P;     break;
+        case 1: *red = Q;     *green = value; *blue = P;     break;
+        case 2: *red = P;     *green = value; *blue = T;     break;
+        case 3: *red = P;     *green = Q;     *blue = value; break;
+        case 4: *red = T;     *green = P;     *blue = value; break;
+        case 5: *red = value; *green = P;     *blue = Q;     break;
+        default: return ESP_FAIL;
     }
 
-    *red   = *red * 255 / 100;
-    *green = *green * 255 / 100;
-    *blue  = *blue * 255 / 100;
+    *red   = (uint8_t)(*red * 255 / 100);
+    *green = (uint8_t)(*green * 255 / 100);
+    *blue  = (uint8_t)(*blue * 255 / 100);
 
     return ESP_OK;
 }
 
-static void light_driver_rgb2hsv(uint16_t red, uint16_t green, uint16_t blue,
-                                 uint16_t *h, uint8_t *s, uint8_t *v)
+/* Chuyển đổi RGB sang HSV */
+static void rgb2hsv(uint8_t red, uint8_t green, uint8_t blue,
+                    uint16_t *h, uint8_t *s, uint8_t *v)
 {
-    double hue, saturation, value;
-    double m_max = MAX(red, MAX(green, blue));
-    double m_min = MIN(red, MIN(green, blue));
-    double m_delta = m_max - m_min;
+    double r = red / 255.0;
+    double g = green / 255.0;
+    double b = blue / 255.0;
 
-    value = m_max / 255.0;
+    double max_val = MAX(r, MAX(g, b));
+    double min_val = MIN(r, MIN(g, b));
+    double delta = max_val - min_val;
 
-    if (m_delta == 0) {
-        hue = 0;
-        saturation = 0;
-    } else {
-        saturation = m_delta / m_max;
+    *v = (uint8_t)(max_val * 100.0 + 0.5);
 
-        if (red == m_max) {
-            hue = (green - blue) / m_delta;
-        } else if (green == m_max) {
-            hue = 2 + (blue - red) / m_delta;
-        } else {
-            hue = 4 + (red - green) / m_delta;
-        }
-
-        hue = hue * 60;
-
-        if (hue < 0) {
-            hue = hue + 360;
-        }
+    if (max_val == 0.0 || delta == 0.0) {
+        *s = 0;
+        *h = 0;
+        return;
     }
 
-    *h = (int)(hue + 0.5);
-    *s = (int)(saturation * 100 + 0.5);
-    *v = (int)(value * 100 + 0.5);
+    *s = (uint8_t)((delta / max_val) * 100.0 + 0.5);
+
+    double hue = 0.0;
+    if (r == max_val) {
+        hue = (g - b) / delta;
+    } else if (g == max_val) {
+        hue = 2.0 + (b - r) / delta;
+    } else {
+        hue = 4.0 + (r - g) / delta;
+    }
+
+    hue *= 60.0;
+    if (hue < 0.0) {
+        hue += 360.0;
+    }
+
+    *h = (uint16_t)(hue + 0.5);
+}
+
+/* Chuyển đổi CTB (Color Temperature & Brightness) sang RGB */
+static void ctb2rgb(uint8_t ct, uint8_t brightness, uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    // ct: 0 (Ấm nhất / Warm White 2700K) -> 100 (Lạnh nhất / Cool White 6500K)
+    float warm_ratio = (100.0f - ct) / 100.0f;
+    float cool_ratio = ct / 100.0f;
+
+    // Màu trắng ấm: {255, 180, 100}, Màu trắng lạnh: {200, 225, 255}
+    float raw_r = (255.0f * warm_ratio + 200.0f * cool_ratio) * (brightness / 100.0f);
+    float raw_g = (180.0f * warm_ratio + 225.0f * cool_ratio) * (brightness / 100.0f);
+    float raw_b = (100.0f * warm_ratio + 255.0f * cool_ratio) * (brightness / 100.0f);
+
+    *r = (uint8_t)(raw_r > 255.0f ? 255 : raw_r);
+    *g = (uint8_t)(raw_g > 255.0f ? 255 : raw_g);
+    *b = (uint8_t)(raw_b > 255.0f ? 255 : raw_b);
+}
+
+/* Ánh xạ và xuất ra phần cứng WS2812B */
+static void hardware_apply_light(void)
+{
+    if (!g_light_status.on) {
+        ws2812_clear();
+        ws2812_refresh();
+        return;
+    }
+
+    // Đang bật -> xuất màu tương ứng với chế độ
+    switch (g_light_status.mode) {
+        case MODE_RGB: {
+            float ratio = g_light_status.brightness / 100.0f;
+            ws2812_set_all_brightness(s_current_r, s_current_g, s_current_b, ratio);
+            break;
+        }
+        case MODE_HSV: {
+            uint8_t r, g, b;
+            hsv2rgb(g_light_status.hue, g_light_status.saturation, g_light_status.value, &r, &g, &b);
+            ws2812_set_all(r, g, b);
+            break;
+        }
+        case MODE_CTB: {
+            uint8_t r, g, b;
+            ctb2rgb(g_light_status.color_temperature, g_light_status.brightness, &r, &g, &b);
+            ws2812_set_all(r, g, b);
+            break;
+        }
+        default: {
+            ws2812_set_all(s_current_r, s_current_g, s_current_b);
+            break;
+        }
+    }
+    ws2812_refresh();
+}
+
+/* Timer Callback cho hiệu ứng Thở (Breathing) và Nhấp nháy (Blink) */
+static void effect_timer_callback(TimerHandle_t xTimer)
+{
+    if (!g_light_status.on) {
+        ws2812_clear();
+        ws2812_refresh();
+        return;
+    }
+
+    if (s_active_effect == EFFECT_BREATH) {
+        const float cycle_ms = 2400.0f; // Chu kỳ thở 2.4s
+        const float step_ms = 30.0f;
+        const float pi = 3.14159265f;
+
+        float angle = (s_breath_elapsed_ms / cycle_ms) * 2.0f * pi;
+        float factor = 0.05f + 0.95f * (0.5f * (1.0f - cosf(angle)));
+
+        ws2812_set_all_brightness(s_effect_base_r, s_effect_base_g, s_effect_base_b, factor);
+        ws2812_refresh();
+
+        s_breath_elapsed_ms += step_ms;
+        if (s_breath_elapsed_ms >= cycle_ms) {
+            s_breath_elapsed_ms = 0.0f;
+        }
+    } else if (s_active_effect == EFFECT_BLINK) {
+        s_blink_state = !s_blink_state;
+        if (s_blink_state) {
+            ws2812_set_all(s_effect_base_r, s_effect_base_g, s_effect_base_b);
+        } else {
+            ws2812_clear();
+        }
+        ws2812_refresh();
+    }
+}
+
+/* Khởi tạo Driver Đèn và Khôi phục NVS */
+esp_err_t light_driver_init(light_driver_config_t *config)
+{
+    LIGHT_PARAM_CHECK(config);
+
+    ESP_LOGI(TAG, "=================================================");
+    ESP_LOGI(TAG, "   Khởi tạo Light Driver (Section 6.5)           ");
+    ESP_LOGI(TAG, "=================================================");
+    ESP_LOGI(TAG, "LEDC Config mapping -> GPIO Red:%d Green:%d Blue:%d Cold:%d Warm:%d",
+             config->gpio_red, config->gpio_green, config->gpio_blue, config->gpio_cold, config->gpio_warm);
+    ESP_LOGI(TAG, "Freq: %u Hz, Fade Period: %u ms, Blink Period: %u ms",
+             (unsigned int)config->freq_hz, (unsigned int)config->fade_period_ms, (unsigned int)config->blink_period_ms);
+
+    // 1. Khởi tạo phần cứng thanh LED WS2812S (8 bóng) trên GPIO 4 (hoặc chân gpio_green)
+    int ws2812_gpio = config->gpio_green > 0 ? config->gpio_green : 4;
+    esp_err_t ret = ws2812_init(ws2812_gpio, 8);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Khởi tạo WS2812S (8 bóng) phần cứng thất bại: %s", esp_err_to_name(ret));
+    }
+
+    // 2. Hiện thực hóa cơ chế khôi phục trạng thái từ Flash (NVS Persistence)
+    memset(&g_light_status, 0, sizeof(light_status_t));
+    if (app_storage_get(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t)) != ESP_OK) {
+        ESP_LOGW(TAG, "Chưa tìm thấy trạng thái đèn trong Flash, thiết lập cấu hình mặc định...");
+        g_light_status.mode              = MODE_RGB;
+        g_light_status.on                = 1;
+        g_light_status.hue               = 360;
+        g_light_status.saturation        = 0;
+        g_light_status.value             = 100;
+        g_light_status.color_temperature = 50;
+        g_light_status.brightness        = 100;
+        g_light_status.fade_period_ms    = config->fade_period_ms ? config->fade_period_ms : 100;
+        g_light_status.blink_period_ms   = config->blink_period_ms ? config->blink_period_ms : 1500;
+
+        s_current_r = 255;
+        s_current_g = 255;
+        s_current_b = 255;
+
+        // Ghi cấu hình mặc định xuống Flash
+        app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
+    } else {
+        ESP_LOGI(TAG, "Đã khôi phục trạng thái từ Flash NVS thành công!");
+        ESP_LOGI(TAG, "Trạng thái: %s | Chế độ: %d | Độ sáng: %d%% | Nhiệt độ màu: %d%%",
+                 g_light_status.on ? "BẬT (ON)" : "TẮT (OFF)",
+                 g_light_status.mode, g_light_status.brightness, g_light_status.color_temperature);
+        ESP_LOGI(TAG, "HSV: Hue=%d, Saturation=%d, Value=%d",
+                 g_light_status.hue, g_light_status.saturation, g_light_status.value);
+    }
+
+    // 3. Cập nhật ngay trạng thái đèn ra phần cứng
+    hardware_apply_light();
+
+    return ESP_OK;
+}
+
+esp_err_t light_driver_deinit(void)
+{
+    light_driver_breath_stop();
+    light_driver_blink_stop();
+    ws2812_clear();
+    ws2812_refresh();
+    return ESP_OK;
+}
+
+esp_err_t light_driver_config(uint32_t fade_period_ms, uint32_t blink_period_ms)
+{
+    g_light_status.fade_period_ms = fade_period_ms;
+    g_light_status.blink_period_ms = blink_period_ms;
+    return app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
+}
+
+esp_err_t light_driver_set_switch(bool status)
+{
+    g_light_status.on = status ? 1 : 0;
+    ESP_LOGI(TAG, "[API] light_driver_set_switch: %s", status ? "BẬT (ON)" : "TẮT (OFF)");
+
+    if (s_active_effect == EFFECT_NONE) {
+        hardware_apply_light();
+    }
+
+    return app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
+}
+
+bool light_driver_get_switch(void)
+{
+    return g_light_status.on != 0;
+}
+
+esp_err_t light_driver_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
+{
+    light_driver_breath_stop();
+    light_driver_blink_stop();
+
+    s_current_r = red;
+    s_current_g = green;
+    s_current_b = blue;
+
+    g_light_status.mode = MODE_RGB;
+    g_light_status.on   = 1;
+
+    rgb2hsv(red, green, blue, &g_light_status.hue, &g_light_status.saturation, &g_light_status.value);
+
+    ESP_LOGI(TAG, "[API] light_driver_set_rgb: R=%d, G=%d, B=%d", red, green, blue);
+    hardware_apply_light();
+
+    return app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
 }
 
 esp_err_t light_driver_set_hsv(uint16_t hue, uint8_t saturation, uint8_t value)
@@ -234,43 +349,44 @@ esp_err_t light_driver_set_hsv(uint16_t hue, uint8_t saturation, uint8_t value)
     LIGHT_PARAM_CHECK(saturation <= 100);
     LIGHT_PARAM_CHECK(value <= 100);
 
-    esp_err_t ret = ESP_OK;
-    uint8_t red   = 0;
-    uint8_t green = 0;
-    uint8_t blue  = 0;
-
-    ret = light_driver_hsv2rgb(hue, saturation, value, &red, &green, &blue);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "light_driver_hsv2rgb, ret: %d", ret);
-
-    ESP_LOGV(TAG, "red: %d, green: %d, blue: %d", red, green, blue);
-
-    ret = iot_led_set_channel(CHANNEL_ID_RED, red, g_light_status.fade_period_ms);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    ret = iot_led_set_channel(CHANNEL_ID_GREEN, green, g_light_status.fade_period_ms);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    ret = iot_led_set_channel(CHANNEL_ID_BLUE, blue, g_light_status.fade_period_ms);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    if (g_light_status.mode != MODE_HSV) {
-        ret = iot_led_set_channel(CHANNEL_ID_WARM, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_COLD, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-    }
+    light_driver_breath_stop();
+    light_driver_blink_stop();
 
     g_light_status.mode       = MODE_HSV;
     g_light_status.on         = 1;
     g_light_status.hue        = hue;
-    g_light_status.value      = value;
     g_light_status.saturation = saturation;
+    g_light_status.value      = value;
 
-    ret = app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
-    LIGHT_ERROR_CHECK(ret < 0, ret, "app_storage_set, ret: %d", ret);
+    hsv2rgb(hue, saturation, value, &s_current_r, &s_current_g, &s_current_b);
 
-    return ESP_OK;
+    ESP_LOGI(TAG, "[API] light_driver_set_hsv: Hue=%d, Sat=%d, Val=%d -> R=%d, G=%d, B=%d",
+             hue, saturation, value, s_current_r, s_current_g, s_current_b);
+    hardware_apply_light();
+
+    return app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
+}
+
+esp_err_t light_driver_set_ctb(uint8_t color_temperature, uint8_t brightness)
+{
+    LIGHT_PARAM_CHECK(color_temperature <= 100);
+    LIGHT_PARAM_CHECK(brightness <= 100);
+
+    light_driver_breath_stop();
+    light_driver_blink_stop();
+
+    g_light_status.mode              = MODE_CTB;
+    g_light_status.on                = 1;
+    g_light_status.color_temperature = color_temperature;
+    g_light_status.brightness        = brightness;
+
+    ctb2rgb(color_temperature, brightness, &s_current_r, &s_current_g, &s_current_b);
+
+    ESP_LOGI(TAG, "[API] light_driver_set_ctb: ColorTemp=%d, Brightness=%d -> R=%d, G=%d, B=%d",
+             color_temperature, brightness, s_current_r, s_current_g, s_current_b);
+    hardware_apply_light();
+
+    return app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
 }
 
 esp_err_t light_driver_set_hue(uint16_t hue)
@@ -288,80 +404,6 @@ esp_err_t light_driver_set_value(uint8_t value)
     return light_driver_set_hsv(g_light_status.hue, g_light_status.saturation, value);
 }
 
-esp_err_t light_driver_get_hsv(uint16_t *hue, uint8_t *saturation, uint8_t *value)
-{
-    LIGHT_PARAM_CHECK(hue);
-    LIGHT_PARAM_CHECK(saturation);
-    LIGHT_PARAM_CHECK(value);
-
-    *hue        = g_light_status.hue;
-    *saturation = g_light_status.saturation;
-    *value      = g_light_status.value;
-
-    return ESP_OK;
-}
-
-uint16_t light_driver_get_hue()
-{
-    return g_light_status.hue;
-}
-
-uint8_t light_driver_get_saturation()
-{
-    return g_light_status.saturation;
-}
-
-uint8_t light_driver_get_value()
-{
-    return g_light_status.value;
-}
-
-uint8_t light_driver_get_mode()
-{
-    return g_light_status.mode;
-}
-
-esp_err_t light_driver_set_ctb(uint8_t color_temperature, uint8_t brightness)
-{
-    LIGHT_PARAM_CHECK(brightness <= 100);
-    LIGHT_PARAM_CHECK(color_temperature <= 100);
-
-    esp_err_t ret = ESP_OK;
-    uint8_t warm_tmp = color_temperature * brightness / 100;
-    uint8_t cold_tmp = (100 - color_temperature) * brightness / 100;
-    warm_tmp         = warm_tmp < 15 ? warm_tmp : 14 + warm_tmp * 86 / 100;
-    cold_tmp         = cold_tmp < 15 ? cold_tmp : 14 + cold_tmp * 86 / 100;
-
-    ret = iot_led_set_channel(CHANNEL_ID_COLD,
-                              cold_tmp * 255 / 100, g_light_status.fade_period_ms);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    ret = iot_led_set_channel(CHANNEL_ID_WARM,
-                              warm_tmp * 255 / 100, g_light_status.fade_period_ms);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    if (g_light_status.mode != MODE_CTB) {
-        ret = iot_led_set_channel(CHANNEL_ID_RED, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_GREEN, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_BLUE, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-    }
-
-    g_light_status.mode              = MODE_CTB;
-    g_light_status.on                = 1;
-    g_light_status.brightness        = brightness;
-    g_light_status.color_temperature = color_temperature;
-
-    ret = app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
-    LIGHT_ERROR_CHECK(ret < 0, ret, "app_storage_set, ret: %d", ret);
-
-    return ESP_OK;
-}
-
 esp_err_t light_driver_set_color_temperature(uint8_t color_temperature)
 {
     return light_driver_set_ctb(color_temperature, g_light_status.brightness);
@@ -369,359 +411,149 @@ esp_err_t light_driver_set_color_temperature(uint8_t color_temperature)
 
 esp_err_t light_driver_set_brightness(uint8_t brightness)
 {
-    return light_driver_set_ctb(g_light_status.color_temperature, brightness);
+    LIGHT_PARAM_CHECK(brightness <= 100);
+    g_light_status.brightness = brightness;
+    hardware_apply_light();
+    return app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
 }
 
-esp_err_t light_driver_get_ctb(uint8_t *color_temperature, uint8_t *brightness)
+uint16_t light_driver_get_hue(void)
 {
-    LIGHT_PARAM_CHECK(color_temperature);
-    LIGHT_PARAM_CHECK(brightness);
+    return g_light_status.hue;
+}
 
-    *brightness        = g_light_status.brightness;
-    *color_temperature = g_light_status.color_temperature;
+uint8_t light_driver_get_saturation(void)
+{
+    return g_light_status.saturation;
+}
 
+uint8_t light_driver_get_value(void)
+{
+    return g_light_status.value;
+}
+
+esp_err_t light_driver_get_hsv(uint16_t *hue, uint8_t *saturation, uint8_t *value)
+{
+    if (hue) *hue = g_light_status.hue;
+    if (saturation) *saturation = g_light_status.saturation;
+    if (value) *value = g_light_status.value;
     return ESP_OK;
 }
 
-uint8_t light_driver_get_color_temperature()
+uint8_t light_driver_get_color_temperature(void)
 {
     return g_light_status.color_temperature;
 }
 
-uint8_t light_driver_get_brightness()
+uint8_t light_driver_get_brightness(void)
 {
     return g_light_status.brightness;
 }
 
-esp_err_t light_driver_set_switch(bool on)
+esp_err_t light_driver_get_ctb(uint8_t *color_temperature, uint8_t *brightness)
 {
-    esp_err_t ret     = ESP_OK;
-    g_light_status.on = on;
-
-    if (!g_light_status.on) {
-        ret = iot_led_set_channel(CHANNEL_ID_RED, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_GREEN, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_BLUE, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_COLD, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_WARM, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_set_channel, ret: %d", ret);
-
-    } else {
-        switch (g_light_status.mode) {
-            case MODE_HSV:
-                g_light_status.value = (g_light_status.value) ? g_light_status.value : 100;
-                ret = light_driver_set_hsv(g_light_status.hue, g_light_status.saturation, g_light_status.value);
-                LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "light_driver_set_hsv, ret: %d", ret);
-                break;
-
-            case MODE_CTB:
-                g_light_status.brightness = (g_light_status.brightness) ? g_light_status.brightness : 100;
-                ret = light_driver_set_ctb(g_light_status.color_temperature, g_light_status.brightness);
-                LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "light_driver_set_ctb, ret: %d", ret);
-                break;
-
-            default:
-                ESP_LOGW(TAG, "This operation is not supported");
-                break;
-        }
-    }
-
-    ret = app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
-    LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "app_storage_set, ret: %d", ret);
-
+    if (color_temperature) *color_temperature = g_light_status.color_temperature;
+    if (brightness) *brightness = g_light_status.brightness;
     return ESP_OK;
 }
 
-bool light_driver_get_switch()
+uint8_t light_driver_get_mode(void)
 {
-    return g_light_status.on;
+    return g_light_status.mode;
 }
 
+/* Hiệu ứng thở (Breathing Effect) */
 esp_err_t light_driver_breath_start(uint8_t red, uint8_t green, uint8_t blue)
 {
-    esp_err_t ret = ESP_OK;
+    light_driver_blink_stop();
 
-    ret = iot_led_start_blink(CHANNEL_ID_RED,
-                              red, g_light_status.blink_period_ms, true);
-    LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_start_blink, ret: %d", ret);
-    ret = iot_led_start_blink(CHANNEL_ID_GREEN,
-                              green, g_light_status.blink_period_ms, true);
-    LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_start_blink, ret: %d", ret);
-    ret = iot_led_start_blink(CHANNEL_ID_BLUE,
-                              blue, g_light_status.blink_period_ms, true);
-    LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_start_blink, ret: %d", ret);
+    s_effect_base_r = red;
+    s_effect_base_g = green;
+    s_effect_base_b = blue;
+    s_active_effect = EFFECT_BREATH;
+    s_breath_elapsed_ms = 0.0f;
+    g_light_status.on = 1;
 
-    g_light_blink_flag = true;
+    ESP_LOGI(TAG, "[API] light_driver_breath_start: R=%d, G=%d, B=%d", red, green, blue);
+
+    if (s_effect_timer == NULL) {
+        s_effect_timer = xTimerCreate("eff_timer", pdMS_TO_TICKS(30), pdTRUE, NULL, effect_timer_callback);
+    }
+    xTimerChangePeriod(s_effect_timer, pdMS_TO_TICKS(30), 0);
+    xTimerStart(s_effect_timer, 0);
 
     return ESP_OK;
 }
 
-esp_err_t light_driver_breath_stop()
+esp_err_t light_driver_breath_stop(void)
 {
-    esp_err_t ret = ESP_OK;
-
-    if (g_light_blink_flag == false) {
-        return ESP_OK;
+    if (s_active_effect == EFFECT_BREATH) {
+        s_active_effect = EFFECT_NONE;
+        if (s_effect_timer != NULL) {
+            xTimerStop(s_effect_timer, 0);
+        }
+        ESP_LOGI(TAG, "[API] light_driver_breath_stop");
+        hardware_apply_light();
     }
+    return ESP_OK;
+}
 
-    ret = iot_led_stop_blink(CHANNEL_ID_RED);
-    LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_stop_blink, ret: %d", ret);
+/* Hiệu ứng nhấp nháy (Blink Effect) */
+esp_err_t light_driver_blink_start(uint8_t red, uint8_t green, uint8_t blue)
+{
+    light_driver_breath_stop();
 
-    ret = iot_led_stop_blink(CHANNEL_ID_GREEN);
-    LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_stop_blink, ret: %d", ret);
+    s_effect_base_r = red;
+    s_effect_base_g = green;
+    s_effect_base_b = blue;
+    s_active_effect = EFFECT_BLINK;
+    s_blink_state = false;
+    g_light_status.on = 1;
 
-    ret = iot_led_stop_blink(CHANNEL_ID_BLUE);
-    LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_stop_blink, ret: %d", ret);
+    uint32_t half_period_ms = g_light_status.blink_period_ms / 2;
+    if (half_period_ms < 100) half_period_ms = 500;
 
-    light_driver_set_switch(true);
+    ESP_LOGI(TAG, "[API] light_driver_blink_start: R=%d, G=%d, B=%d, Chu kỳ=%u ms",
+             red, green, blue, (unsigned int)g_light_status.blink_period_ms);
 
+    if (s_effect_timer == NULL) {
+        s_effect_timer = xTimerCreate("eff_timer", pdMS_TO_TICKS(half_period_ms), pdTRUE, NULL, effect_timer_callback);
+    }
+    xTimerChangePeriod(s_effect_timer, pdMS_TO_TICKS(half_period_ms), 0);
+    xTimerStart(s_effect_timer, 0);
+
+    return ESP_OK;
+}
+
+esp_err_t light_driver_blink_stop(void)
+{
+    if (s_active_effect == EFFECT_BLINK) {
+        s_active_effect = EFFECT_NONE;
+        if (s_effect_timer != NULL) {
+            xTimerStop(s_effect_timer, 0);
+        }
+        ESP_LOGI(TAG, "[API] light_driver_blink_stop");
+        hardware_apply_light();
+    }
     return ESP_OK;
 }
 
 esp_err_t light_driver_fade_brightness(uint8_t brightness)
 {
-    esp_err_t ret = ESP_OK;
-    g_fade_mode   = MODE_ON;
-    uint32_t fade_period_ms = 0;
-
-    if (g_light_status.mode == MODE_HSV) {
-        uint8_t red   = 0;
-        uint8_t green = 0;
-        uint8_t blue  = 0;
-
-        ret = light_driver_hsv2rgb(g_light_status.hue, g_light_status.saturation, g_light_status.value, &red, &green, &blue);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "light_driver_hsv2rgb, ret: %d", ret);
-
-        if (brightness != 0) {
-            ret = iot_led_get_channel((ledc_channel_t)CHANNEL_ID_RED, &red);
-            LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_get_channel, ret: %d", ret);
-            ret = iot_led_get_channel((ledc_channel_t)CHANNEL_ID_GREEN, &green);
-            LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_get_channel, ret: %d", ret);
-            ret = iot_led_get_channel((ledc_channel_t)CHANNEL_ID_BLUE, &blue);
-            LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_get_channel, ret: %d", ret);
-
-            uint8_t max_color       = MAX(MAX(red, green), blue);
-            uint8_t change_value    = brightness * 255 / 100 - max_color;
-            fade_period_ms = LIGHT_FADE_PERIOD_MAX_MS * change_value / 255;
-        } else {
-            fade_period_ms = LIGHT_FADE_PERIOD_MAX_MS * MAX(MAX(red, green), blue) / 255;
-            red   = 0;
-        }
-
-        g_light_status.value = brightness;
-        light_driver_hsv2rgb(g_light_status.hue, g_light_status.saturation, g_light_status.value, &red, &green, &blue);
-
-        ret = iot_led_set_channel(CHANNEL_ID_RED, red, fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_GREEN, green, fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_BLUE, blue, fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    } else if (g_light_status.mode == MODE_CTB) {
-        uint8_t warm_tmp = 0;
-        uint8_t cold_tmp = 0;
-        fade_period_ms = LIGHT_FADE_PERIOD_MAX_MS * g_light_status.brightness / 100;
-
-        if (brightness != 0) {
-            uint8_t change_value = brightness - g_light_status.brightness;
-            warm_tmp = g_light_status.color_temperature;
-            cold_tmp = (brightness - g_light_status.color_temperature);
-            fade_period_ms = LIGHT_FADE_PERIOD_MAX_MS * change_value / 100;
-        }
-
-        ret = iot_led_set_channel(CHANNEL_ID_COLD,
-                                  cold_tmp * 255 / 100, fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_WARM,
-                                  warm_tmp * 255 / 100, fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-        g_light_status.brightness = brightness;
-    }
-
-    ret = app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
-    LIGHT_ERROR_CHECK(ret < 0, ret, "app_storage_set, ret: %d", ret);
-
-    return ESP_OK;
-}
-
-static void light_fade_timer_stop()
-{
-    if (!g_fade_timer) {
-        return ;
-    }
-
-    if (!xTimerStop(g_fade_timer, portMAX_DELAY)) {
-        ESP_LOGW(TAG, "xTimerStop timer: %p", g_fade_timer);
-    }
-
-    if (!xTimerDelete(g_fade_timer, portMAX_DELAY)) {
-        ESP_LOGW(TAG, "xTimerDelete timer: %p", g_fade_timer);
-    }
-
-    g_fade_timer = NULL;
-}
-
-static void light_fade_timer_cb(void *timer)
-{
-    uint8_t red   = 0;
-    uint8_t green = 0;
-    uint8_t blue  = 0;
-    uint32_t fade_period_ms = LIGHT_FADE_PERIOD_MAX_MS * 2 / 6;
-    int variety = (g_fade_hue > 180) ? 60 : -60;
-
-    if (g_light_status.hue >= 360 || g_light_status.hue <= 0) {
-        light_fade_timer_stop();
-    }
-
-    g_light_status.hue = g_light_status.hue >= 360 ? 360 : g_light_status.hue + variety;
-    g_light_status.hue = g_light_status.hue <= 60 ? 0 : g_light_status.hue + variety;
-
-    light_driver_hsv2rgb(g_light_status.hue, g_light_status.saturation, g_light_status.value, &red, &green, &blue);
-
-    iot_led_set_channel(CHANNEL_ID_RED, red, fade_period_ms);
-    iot_led_set_channel(CHANNEL_ID_GREEN, green, fade_period_ms);
-    iot_led_set_channel(CHANNEL_ID_BLUE, blue, fade_period_ms);
+    return light_driver_set_brightness(brightness);
 }
 
 esp_err_t light_driver_fade_hue(uint16_t hue)
 {
-    esp_err_t ret = ESP_OK;
-    g_fade_mode   = MODE_HSV;
-    g_fade_hue    = hue;
-
-    light_fade_timer_stop();
-
-    if (g_light_status.mode != MODE_HSV) {
-        ret = iot_led_set_channel(CHANNEL_ID_WARM, 0, 0);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_COLD, 0, 0);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-    }
-
-    g_light_status.mode     = MODE_HSV;
-    g_light_status.value    = (g_light_status.value == 0) ? 100 : g_light_status.value;
-    uint32_t fade_period_ms = LIGHT_FADE_PERIOD_MAX_MS * 2 / 6;
-
-    light_fade_timer_cb(NULL);
-
-    g_fade_timer = xTimerCreate("light_timer", fade_period_ms,
-                                true, NULL, light_fade_timer_cb);
-    xTimerStart(g_fade_timer, 0);
-
-    return ESP_OK;
+    return light_driver_set_hue(hue);
 }
 
 esp_err_t light_driver_fade_warm(uint8_t color_temperature)
 {
-    esp_err_t ret = ESP_OK;
-    g_fade_mode   = MODE_CTB;
-
-    if (g_light_status.mode != MODE_CTB) {
-        ret = iot_led_set_channel(CHANNEL_ID_RED, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_GREEN, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-        ret = iot_led_set_channel(CHANNEL_ID_BLUE, 0, g_light_status.fade_period_ms);
-        LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-    }
-
-    uint8_t warm_tmp =  color_temperature * g_light_status.brightness / 100;
-    uint8_t cold_tmp = (100 - color_temperature) * g_light_status.brightness / 100;
-
-    ret = iot_led_set_channel(CHANNEL_ID_COLD, cold_tmp * 255 / 100, LIGHT_FADE_PERIOD_MAX_MS);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    ret = iot_led_set_channel(CHANNEL_ID_WARM, warm_tmp * 255 / 100, LIGHT_FADE_PERIOD_MAX_MS);
-    LIGHT_ERROR_CHECK(ret < 0, ret, "iot_led_set_channel, ret: %d", ret);
-
-    g_light_status.mode              = MODE_CTB;
-    g_light_status.color_temperature = color_temperature;
-    ret = app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
-    LIGHT_ERROR_CHECK(ret < 0, ret, "app_storage_set, ret: %d", ret);
-
-    return ESP_OK;
+    return light_driver_set_color_temperature(color_temperature);
 }
 
-esp_err_t light_driver_fade_stop()
+esp_err_t light_driver_fade_stop(void)
 {
-    esp_err_t ret = ESP_OK;
-
-    light_fade_timer_stop();
-
-    if (g_light_status.mode != MODE_CTB) {
-        uint16_t hue       = 0;
-        uint8_t saturation = 0;
-        uint8_t value      = 0;
-
-        ret = iot_led_stop_blink(CHANNEL_ID_RED);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_stop_blink, ret: %d", ret);
-
-        ret = iot_led_stop_blink(CHANNEL_ID_GREEN);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_stop_blink, ret: %d", ret);
-
-        ret = iot_led_stop_blink(CHANNEL_ID_BLUE);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_stop_blink, ret: %d", ret);
-
-        uint8_t red, green, blue;
-
-        ret = iot_led_get_channel(CHANNEL_ID_RED, &red);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_get_channel, ret: %d", ret);
-        ret = iot_led_get_channel(CHANNEL_ID_GREEN, &green);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_get_channel, ret: %d", ret);
-        ret = iot_led_get_channel(CHANNEL_ID_BLUE, &blue);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_get_channel, ret: %d", ret);
-
-        light_driver_rgb2hsv(red, green, blue, &hue, &saturation, &value);
-
-        g_light_status.hue   = (g_fade_mode == MODE_HSV) ? hue : g_light_status.hue;
-        g_light_status.value = (g_fade_mode == MODE_OFF || g_fade_mode == MODE_ON) ? value : g_light_status.value;
-    } else {
-        uint8_t color_temperature = 0;
-        uint8_t brightness        = 0;
-
-        ret = iot_led_stop_blink(CHANNEL_ID_COLD);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_stop_blink, ret: %d", ret);
-
-        ret = iot_led_stop_blink(CHANNEL_ID_WARM);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_stop_blink, ret: %d", ret);
-
-        uint8_t warm_tmp, cold_tmp;
-        uint8_t tmp;
-
-        ret = iot_led_get_channel(CHANNEL_ID_WARM, &tmp);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_get_channel, ret: %d", ret);
-        warm_tmp = (int32_t)tmp * 100 / 255;
-
-        ret = iot_led_get_channel(CHANNEL_ID_COLD, &tmp);
-        LIGHT_ERROR_CHECK(ret < 0, ESP_FAIL, "iot_led_get_channel, ret: %d", ret);
-        cold_tmp = (int32_t)tmp * 100 / 255;
-
-        color_temperature = (!warm_tmp) ? 0 : 100 / (cold_tmp / warm_tmp + 1);
-        brightness        = (!color_temperature) ? cold_tmp : warm_tmp * 100 / color_temperature;
-
-        g_light_status.brightness        = (g_fade_mode == MODE_OFF || g_fade_mode == MODE_ON) ? brightness : g_light_status.brightness;
-        g_light_status.color_temperature = (g_fade_mode == MODE_CTB) ? color_temperature : g_light_status.color_temperature;
-    }
-
-    ret = app_storage_set(LIGHT_STATUS_STORE_KEY, &g_light_status, sizeof(light_status_t));
-    LIGHT_ERROR_CHECK(ret < 0, ret, "app_storage_set, ret: %d", ret);
-
-    g_fade_mode = MODE_NONE;
     return ESP_OK;
 }

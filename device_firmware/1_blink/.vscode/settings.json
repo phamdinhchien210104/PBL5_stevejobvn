@@ -1,14 +1,19 @@
 {
-  "idf.currentSetup": "D:\\esp\\v6.0.2\\esp-idf",
+  "idf.currentSetup": "C:\\esp\\v6.1-beta1\\esp-idf",
   "idf.customExtraVars": {
     "OPENOCD_SCRIPTS": "D:\\Espressif\\tools\\openocd-esp32\\v0.12.0-esp32-20260424\\openocd-esp32\\share\\openocd\\scripts",
     "IDF_CCACHE_ENABLE": "1",
-    "ESP_ROM_ELF_DIR": "D:\\Espressif\\tools\\esp-rom-elfs\\20241011"
+    "ESP_ROM_ELF_DIR": "D:\\Espressif\\tools\\esp-rom-elfs\\20241011",
+    "IDF_TARGET": "esp32c3"
   },
-  "clangd.path": "D:\\Espressif\\tools\\esp-clang\\esp-20.1.1_20250829\\esp-clang\\bin\\clangd.exe",
+  "clangd.path": "C:\\Espressif\\tools\\esp-clangd\\esp-21.1.3_20260408\\esp-clangd\\bin\\clangd.exe",
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=d:\\Document\\PBL5_stevejobvn\\device_firmware\\1_blink\\build"
-  ]
+    "--compile-commands-dir=c:\\PBL5\\PBL5_stevejobvn\\PBL5_stevejobvn\\device_firmware\\1_blink\\build"
+  ],
+  "idf.openOcdConfigs": [
+    "board/esp32c3-builtin.cfg"
+  ],
+  "idf.portWin": "COM8"
 }

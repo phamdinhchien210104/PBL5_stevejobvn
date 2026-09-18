@@ -30,7 +30,7 @@
  * - Chân GND nối vào GND của ESP32-C3
  */
 #define LIGHT_WS2818_GPIO          4
-#define LIGHT_WS2818_NUM_LEDS      1    /**< Số lượng hạt LED (1 nếu là 1 hạt, hoặc N nếu là thanh/vòng LED) */
+#define LIGHT_WS2818_NUM_LEDS      8    /**< Số lượng hạt LED: thanh 8 bóng WS2812S */
 
 /**
  * @brief Legacy PWM Light driver Macro
