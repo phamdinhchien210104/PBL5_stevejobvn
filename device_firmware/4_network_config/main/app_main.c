@@ -53,6 +53,7 @@
 #define wifi_prov_sta_fail_reason_t                 network_prov_wifi_sta_fail_reason_t
 #define WIFI_PROV_STA_AUTH_ERROR                    NETWORK_PROV_WIFI_STA_AUTH_ERROR
 #define WIFI_PROV_STA_AP_NOT_FOUND                  NETWORK_PROV_WIFI_STA_AP_NOT_FOUND
+#define wifi_prov_mgr_reset_sm_state_on_failure     network_prov_mgr_reset_wifi_sm_state_on_failure
 
 #if defined(CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1)
 #define APP_PROV_SEC_MODE                           NETWORK_PROV_SECURITY_1
@@ -70,6 +71,7 @@
 #include "wifi_provisioning/scheme_ble.h"
 #define APP_PROV_SEC_MODE                           WIFI_PROV_SECURITY_1
 #define APP_PROV_POP                                "abcd1234"
+#define wifi_prov_mgr_reset_sm_state_on_failure     wifi_prov_mgr_reset_sm_state_on_failure
 #endif
 
 #include "qrcode.h"
@@ -101,25 +103,6 @@ static void get_device_service_name(char *service_name, size_t max)
     esp_wifi_get_mac(WIFI_IF_STA, eth_mac);
     snprintf(service_name, max, "%s%02X%02X%02X",
              ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
-}
-
-/**
- * @brief Handler xử lý endpoint dữ liệu tùy chọn (Custom Data)
- */
-esp_err_t custom_prov_data_handler(uint32_t session_id, const uint8_t *inbuf, ssize_t inlen,
-                                   uint8_t **outbuf, ssize_t *outlen, void *priv_data)
-{
-    if (inbuf) {
-        ESP_LOGI(TAG, "Nhận dữ liệu tùy chỉnh từ app: %.*s", (int)inlen, (char *)inbuf);
-    }
-    char response[] = "SUCCESS";
-    *outbuf = (uint8_t *)strdup(response);
-    if (*outbuf == NULL) {
-        ESP_LOGE(TAG, "Hệ thống hết bộ nhớ heap");
-        return ESP_ERR_NO_MEM;
-    }
-    *outlen = strlen(response) + 1;
-    return ESP_OK;
 }
 
 /**
@@ -167,47 +150,85 @@ static void event_handler(void *arg, esp_event_base_t event_base,
 
         case WIFI_PROV_CRED_RECV: {
             wifi_sta_config_t *wifi_sta_cfg = (wifi_sta_config_t *)event_data;
-            ESP_LOGI(TAG, "==> [PROV] Đã nhận thông tin Wi-Fi từ điện thoại!");
-            ESP_LOGI(TAG, "    SSID : %s", (char *)wifi_sta_cfg->ssid);
+            ESP_LOGI(TAG, "==========================================================");
+            ESP_LOGI(TAG, "==> [PROV] ĐÃ NHẬN THÔNG TIN WI-FI TỪ ĐIỆN THOẠI!");
+            ESP_LOGI(TAG, "    Tên Wi-Fi (SSID) : %s", (char *)wifi_sta_cfg->ssid);
+            ESP_LOGI(TAG, "    Đang tiến hành kết nối tới Access Point...");
+            ESP_LOGI(TAG, "==========================================================");
             app_driver_set_prov_status(PROV_STATUS_CONNECTING);
             break;
         }
 
         case WIFI_PROV_CRED_FAIL: {
             wifi_prov_sta_fail_reason_t *reason = (wifi_prov_sta_fail_reason_t *)event_data;
-            ESP_LOGE(TAG, "==> [PROV] Kết nối Wi-Fi thất bại sau khi nhận thông tin!");
+            ESP_LOGE(TAG, "==========================================================");
+            ESP_LOGE(TAG, "==> [PROV] KẾT NỐI WI-FI THẤT BẠI!");
             if (*reason == WIFI_PROV_STA_AUTH_ERROR) {
-                ESP_LOGE(TAG, "    Lý do: SAI MẬT KHẨU WI-FI. Vui lòng nhập lại trên app điện thoại.");
+                ESP_LOGE(TAG, "    Lý do: SAI MẬT KHẨU WI-FI!");
+                ESP_LOGW(TAG, "    Vui lòng kiểm tra và nhập lại đúng mật khẩu trên app điện thoại.");
             } else {
-                ESP_LOGE(TAG, "    Lý do: KHÔNG TÌM THẤY ROUTER / AP.");
+                ESP_LOGE(TAG, "    Lý do: KHÔNG TÌM THẤY ROUTER / AP!");
+                ESP_LOGW(TAG, "    Lưu ý: ESP32-C3 chỉ hỗ trợ băng tần Wi-Fi 2.4GHz (không hỗ trợ 5GHz).");
             }
+            ESP_LOGE(TAG, "==========================================================");
             app_driver_set_prov_status(PROV_STATUS_FAILED);
+            /* Reset state machine để app điện thoại nhận mã lỗi và cho phép nhập lại */
+            wifi_prov_mgr_reset_sm_state_on_failure();
             break;
         }
 
         case WIFI_PROV_CRED_SUCCESS:
-            ESP_LOGI(TAG, "==> [PROV] Đã xác thực thành công thông tin Wi-Fi!");
+            ESP_LOGI(TAG, "==> [PROV] Xác thực thông tin Wi-Fi thành công! Đang chờ cấp IP...");
             break;
 
         case WIFI_PROV_END:
-            ESP_LOGI(TAG, "==> [PROV] Quy trình cấp phát hoàn tất. Giải phóng BLE Stack...");
+            ESP_LOGI(TAG, "==> [PROV] Quy trình cấp phát hoàn tất. Giải phóng bộ nhớ BLE Stack...");
             wifi_prov_mgr_deinit();
+            /* Đăng ký WIFI_EVENT để tự động reconnect nếu router bị mất kết nối khi đang chạy */
+            esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL);
             break;
 
         default:
             break;
         }
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        s_is_connected = false;
-        if (s_retry_num < 5) {
+    } else if (event_base == PROTOCOMM_TRANSPORT_BLE_EVENT) {
+        switch (event_id) {
+        case PROTOCOMM_TRANSPORT_BLE_CONNECTED:
+            ESP_LOGI(TAG, "==> [BLE] Smartphone đã kết nối Bluetooth LE với Đèn!");
+            break;
+        case PROTOCOMM_TRANSPORT_BLE_DISCONNECTED:
+            ESP_LOGI(TAG, "==> [BLE] Smartphone đã ngắt kết nối Bluetooth LE.");
+            break;
+        default:
+            break;
+        }
+    } else if (event_base == PROTOCOMM_SECURITY_SESSION_EVENT) {
+        switch (event_id) {
+        case PROTOCOMM_SECURITY_SESSION_SETUP_OK:
+            ESP_LOGI(TAG, "==> [SEC] Bắt tay bảo mật Security 1 (PoP) THÀNH CÔNG!");
+            break;
+        case PROTOCOMM_SECURITY_SESSION_INVALID_SECURITY_PARAMS:
+            ESP_LOGE(TAG, "==> [SEC] Tham số bảo mật không hợp lệ!");
+            break;
+        case PROTOCOMM_SECURITY_SESSION_CREDENTIALS_MISMATCH:
+            ESP_LOGE(TAG, "==> [SEC] SAI MÃ BẢO MẬT (PoP)! Mã Proof of Possession đúng là: abcd1234");
+            break;
+        default:
+            break;
+        }
+    } else if (event_base == WIFI_EVENT) {
+        if (event_id == WIFI_EVENT_STA_START) {
             esp_wifi_connect();
-            s_retry_num++;
-            ESP_LOGW(TAG, "Thử kết nối lại Router Wi-Fi (lần %d/5)...", s_retry_num);
-        } else {
-            ESP_LOGE(TAG, "Mất kết nối Wi-Fi sau 5 lần thử!");
-            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+        } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            s_is_connected = false;
+            if (s_retry_num < 5) {
+                esp_wifi_connect();
+                s_retry_num++;
+                ESP_LOGW(TAG, "Mất kết nối Wi-Fi. Đang thử kết nối lại (lần %d/5)...", s_retry_num);
+            } else {
+                ESP_LOGE(TAG, "Không thể kết nối lại Wi-Fi sau 5 lần thử!");
+                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            }
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
@@ -238,14 +259,20 @@ static void wifi_initialize(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    /* Register our event handler for Wi-Fi, IP and Provisioning related events */
+    /* Đăng ký các event handler cho Provisioning, BLE transport, Security và IP */
+    /* LƯU Ý KỸ THUẬT: KHÔNG đăng ký WIFI_EVENT ở đây vì network_provisioning
+     * tự quản lý WIFI_EVENT trong suốt quá trình cấp phát để tránh xung đột state machine */
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(PROTOCOMM_TRANSPORT_BLE_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(PROTOCOMM_SECURITY_SESSION_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 }
 
 static void wifi_station_initialize(void)
 {
+    /* Đăng ký handler WIFI_EVENT cho chế độ Station thông thường khi thiết bị đã được cấp phát */
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
+
     /* Start Wi-Fi in station mode */
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -270,8 +297,11 @@ static void wifi_station_initialize(void)
 
 static void wifi_prov_mgr_initialize(void)
 {
-    /* Cấu hình Provisioning Manager với scheme BLE */
+    /* Cấu hình Provisioning Manager với scheme BLE và thử lại tối đa 5 lần */
     wifi_prov_mgr_config_t config = {
+        .network_prov_wifi_conn_cfg = {
+            .wifi_conn_attempts = 5,
+        },
         .scheme = wifi_prov_scheme_ble,
         .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BLE
     };
@@ -297,9 +327,7 @@ static void wifi_prov_mgr_initialize(void)
         };
         wifi_prov_scheme_ble_set_service_uuid(custom_service_uuid);
 
-        wifi_prov_mgr_endpoint_create("custom-data");
         ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(security, pop, service_name, service_key));
-        wifi_prov_mgr_endpoint_register("custom-data", custom_prov_data_handler, NULL);
 
         /* In mã QR Code trực quan trên màn hình terminal */
         wifi_prov_print_qr(service_name, pop, PROV_TRANSPORT_BLE);
