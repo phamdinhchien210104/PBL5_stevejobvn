@@ -44,6 +44,8 @@ enum light_mode {
  * @brief Light driven configuration
  */
 typedef struct {
+    gpio_num_t gpio_ws2812;   /**< Data IN (DIN) pin for WS2812B / NeoPixel LED */
+    uint16_t   num_leds;      /**< Number of addressable LEDs in strip */
     gpio_num_t gpio_red;      /**< Red corresponds to GPIO */
     gpio_num_t gpio_green;    /**< Green corresponds to GPIO */
     gpio_num_t gpio_blue;     /**< Blue corresponds to GPIO */

@@ -176,8 +176,11 @@ void app_driver_init(void)
     }
 
     /* 2. Khởi tạo bộ thông số LEDC / Light Driver (Mục 6.5.2) */
-    ESP_LOGI(TAG, "2. Cấu hình bộ thông số driver_config theo Section 6.5.2");
+    ESP_LOGI(TAG, "2. Cấu hình bộ thông số driver_config cho WS2812B (GPIO %d, %d hạt)",
+             LIGHT_WS2818_GPIO, LIGHT_WS2818_NUM_LEDS);
     light_driver_config_t driver_config = {
+        .gpio_ws2812     = LIGHT_WS2818_GPIO,
+        .num_leds        = LIGHT_WS2818_NUM_LEDS,
         .gpio_red        = LIGHT_GPIO_RED,
         .gpio_green      = LIGHT_GPIO_GREEN,
         .gpio_blue       = LIGHT_GPIO_BLUE,

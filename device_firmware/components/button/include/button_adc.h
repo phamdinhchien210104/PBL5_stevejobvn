@@ -11,39 +11,41 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 #ifndef __IOT_BUTTON_ADC_H__
 #define __IOT_BUTTON_ADC_H__
 
-#if __has_include("driver/adc.h")
-#include "driver/adc.h"
-#else
-typedef int adc1_channel_t;
-#endif
+#include "driver/gpio.h"
+#include "esp_adc/adc_oneshot.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define ADC_BUTTON_COMBINE(channel, index) ((channel)<<8 | (index))
-#define ADC_BUTTON_SPLIT_INDEX(data) ((uint32_t)(data)&0xff)
-#define ADC_BUTTON_SPLIT_CHANNEL(data) (((uint32_t)(data) >> 8) & 0xff)
+#define ADC_BUTTON_COMBINE(channel, index) \
+    ((channel) << 8 | (index))
+
+#define ADC_BUTTON_SPLIT_INDEX(data) \
+    ((uint32_t)(data) & 0xff)
+
+#define ADC_BUTTON_SPLIT_CHANNEL(data) \
+    (((uint32_t)(data) >> 8) & 0xff)
 
 /**
- * @brief adc button configuration
- * 
+ * @brief ADC button configuration
  */
 typedef struct {
-    adc1_channel_t adc_channel;  /**< Channel of ADC */
-    uint8_t button_index;        /**< button index on the channel */
-    uint16_t min;                /**< min voltage in mv corresponding to the button */
-    uint16_t max;                /**< max voltage in mv corresponding to the button */
+    adc_channel_t adc_channel;  /**< Channel of ADC */
+    uint8_t button_index;       /**< Button index on the channel */
+    uint16_t min;               /**< Min voltage in mV corresponding to the button */
+    uint16_t max;               /**< Max voltage in mV corresponding to the button */
 } button_adc_config_t;
 
 /**
- * @brief Initialize gpio button
- * 
- * @param config pointer of configuration struct
- * 
+ * @brief Initialize ADC button
+ *
+ * @param config Pointer to configuration struct
+ *
  * @return
  *      - ESP_OK on success
  *      - ESP_ERR_INVALID_ARG   Arguments is NULL.
@@ -53,23 +55,25 @@ typedef struct {
 esp_err_t button_adc_init(const button_adc_config_t *config);
 
 /**
- * @brief Deinitialize gpio button
- * 
+ * @brief Deinitialize ADC button
+ *
  * @param channel ADC channel
  * @param button_index Button index on the channel
- * 
+ *
  * @return
  *      - ESP_OK on success
- *      - ESP_ERR_INVALID_ARG   Arguments is invalid.
+ *      - ESP_ERR_INVALID_ARG Arguments is invalid.
  */
-esp_err_t button_adc_deinit(adc1_channel_t channel, int button_index);
+esp_err_t button_adc_deinit(adc_channel_t channel, int button_index);
 
 /**
- * @brief Get the adc button level
- * 
- * @param button_index It is compressed by ADC channel and button index, use the macro ADC_BUTTON_COMBINE to generate. It will be treated as a uint32_t variable.
- * 
- * @return 
+ * @brief Get the ADC button level
+ *
+ * @param button_index
+ *      Compressed ADC channel and button index.
+ *      Use ADC_BUTTON_COMBINE() to generate the value.
+ *
+ * @return
  *      - 0 Not pressed
  *      - 1 Pressed
  */
@@ -79,4 +83,4 @@ uint8_t button_adc_get_key_level(void *button_index);
 }
 #endif
 
-#endif /**< __IOT_BUTTON_ADC_H__ */
+#endif /* __IOT_BUTTON_ADC_H__ */

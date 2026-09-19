@@ -248,11 +248,16 @@ esp_err_t light_driver_init(light_driver_config_t *config)
     ESP_LOGI(TAG, "Freq: %u Hz, Fade Period: %u ms, Blink Period: %u ms",
              (unsigned int)config->freq_hz, (unsigned int)config->fade_period_ms, (unsigned int)config->blink_period_ms);
 
-    // 1. Khởi tạo phần cứng thanh LED WS2812S (8 bóng) trên GPIO 4 (hoặc chân gpio_green)
-    int ws2812_gpio = config->gpio_green > 0 ? config->gpio_green : 4;
-    esp_err_t ret = ws2812_init(ws2812_gpio, 8);
+    // 1. Khởi tạo phần cứng thanh LED WS2812B (8 hạt NeoPixel) qua Hardware SPI2 DMA
+    int ws2812_gpio = config->gpio_ws2812 > 0 ? config->gpio_ws2812 : (config->gpio_green > 0 ? config->gpio_green : 4);
+    uint16_t num_leds = config->num_leds > 0 ? config->num_leds : 8;
+    esp_err_t ret = ws2812_init(ws2812_gpio, num_leds);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Khởi tạo WS2812S (8 bóng) phần cứng thất bại: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Khởi tạo thanh LED WS2812B (%d hạt) trên GPIO %d thất bại: %s",
+                 num_leds, ws2812_gpio, esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Đã khởi tạo thành công thanh LED WS2812B (%d hạt) trên GPIO %d qua Hardware SPI DMA",
+                 num_leds, ws2812_gpio);
     }
 
     // 2. Hiện thực hóa cơ chế khôi phục trạng thái từ Flash (NVS Persistence)

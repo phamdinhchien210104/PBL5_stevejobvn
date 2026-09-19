@@ -15,11 +15,12 @@
 #ifndef __BOARD_ESP32S3_DEVKITC_H__
 #define __BOARD_ESP32S3_DEVKITC_H__
 
-/* Boot button on ESP32-S3 DevKitC */
+/* Nút nhấn Boot trên ESP32-S3 DevKitC (hoặc nút cơ rời 2 chân: 1 chân vào GPIO 0, 1 chân vào GND) */
 #define LIGHT_BUTTON_GPIO          0
 #define LIGHT_BUTTON_ACTIVE_LEVEL  0
 
-#define LIGHT_WS2818_GPIO          48   /**< Built-in RGB LED on ESP32-S3-DevKitC-1 */
+/* Chân Data IN (DIN) và số hạt LED cho Thanh LED WS2812B 8-Bit NeoPixel (Mặc định GPIO 4) */
+#define LIGHT_WS2818_GPIO          4
 #define LIGHT_WS2818_NUM_LEDS      8
 
 /**

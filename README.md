@@ -54,6 +54,22 @@ PBL5_stevejobvn/
 2. Chọn file: **`pbl5.code-workspace`** tại thư mục gốc.
 3. Lúc này cột Explorer sẽ hiển thị tách bạch từng chương (`🌟 1_blink`, `💡 2_light_drivers`,...), và Extension ESP-IDF sẽ tự động kích hoạt 100%.
 
+### Bước 3: Cấu hình Extension trên Máy Cá nhân (Tránh Xung đột Git)
+> [!IMPORTANT]
+> **Nguyên tắc cốt lõi của nhóm**: Mỗi bạn có đường dẫn cài đặt khác nhau (ổ `C:` hay `D:`) và cổng COM khác nhau. **Tuyệt đối không commit đường dẫn tuyệt đối hoặc cổng COM cá nhân lên file `.vscode/settings.json` của Git**. Thay vào đó, hãy cấu hình 1 lần duy nhất vào **User Settings** theo các bước sau:
+
+1. **Kích hoạt trình thiết lập tự động**:
+   - Nhấn phím `F1` (hoặc `Ctrl + Shift + P`) $\rightarrow$ Gõ và chọn: **`ESP-IDF: Configure ESP-IDF Extension`**.
+2. **Chọn bộ cài ESP-IDF có sẵn trên máy bạn**:
+   - Chọn **"Find ESP-IDF in your system"** (hoặc "Existing Setup").
+   - Extension sẽ tự động quét và hiện ra bộ cài đặt trên máy bạn (ví dụ: `D:\esp\v6.0.2\esp-idf` hoặc `C:\esp\...`).
+   - Bấm **Save / Complete**.
+   - *Toàn bộ đường dẫn này sẽ tự động lưu vào User Settings riêng của bạn (`%APPDATA%\Code\User\settings.json`), nằm ngoài Git và không bao giờ bị ghi đè hay xung đột khi các thành viên pull/push code!*
+3. **Cấu hình Chip Mục tiêu và Cổng COM dưới thanh trạng thái (Status Bar)**:
+   - **Device Target**: Chọn `esp32s3` (cho kit ESP32-S3-DevKitC-1-N16R8) hoặc `esp32c3` (cho kit ESP32-C3).
+   - **Port**: Chọn cổng COM cắm kit của bạn (`COM3`, `COM4`, `COM8`,...).
+   - **Flash Type**: Chọn `UART`.
+
 ---
 
 ## 🕹️ 4. Thao tác Biên dịch & Nạp Firmware trên Extension
@@ -106,6 +122,14 @@ Format: `<loại>: <mô tả ngắn gọn>`
 - `refactor`: Tái cấu trúc code nhưng không đổi logic (ví dụ: `refactor: extract board pins into header`).
 - `docs`: Cập nhật tài liệu, README, ADR (ví dụ: `docs: update getting started guide`).
 - `chore`: Cấu hình build, toolchain, gitignore (ví dụ: `chore: add github actions ci`).
+
+### 5.4. Quy tắc Giữ sạch Git Repository (Git Hygiene):
+- **Không commit đường dẫn máy cá nhân**: File `.vscode/settings.json` trong Git chỉ lưu các thiết lập chuẩn chung. Nếu máy bạn có tùy chỉnh đường dẫn riêng ở Workspace level, hãy dùng lệnh sau để Git bỏ qua các thay đổi cục bộ:
+  ```bash
+  git update-index --skip-worktree .vscode/settings.json
+  ```
+- **Tuyệt đối không commit tệp index/cache nhị phân**: Không commit thư mục `.clangd/` hay các file nhị phân `*.idx` của clangd vào repo.
+- **Không commit thư mục `build/` hay `sdkconfig.old`**: Luôn đảm bảo chỉ commit mã nguồn và tài liệu cần thiết.
 
 ---
 

@@ -1,0 +1,34 @@
+{
+    // =========================================================================
+    // PBL5 Multi-Developer ESP-IDF Template Settings
+    // =========================================================================
+    // HƯỚNG DẪN DÀNH CHO THÀNH VIÊN NHÓM:
+    // 1. Khuyến nghị: KHÔNG cần copy file này vào .vscode/settings.json.
+    //    Hãy nhấn F1 -> "ESP-IDF: Configure ESP-IDF Extension" để cấu hình
+    //    tự động lưu vào User Settings cá nhân của bạn (%APPDATA%\Code\User\settings.json).
+    // 2. Nếu muốn tùy biến riêng cho Workspace của bạn, hãy copy file này thành:
+    //    .vscode/settings.json (file này đã nằm trong .gitignore, không bị đẩy lên repo).
+    // =========================================================================
+
+    // Đường dẫn ESP-IDF và Tools (Tùy chỉnh theo máy của bạn, ví dụ C:\ hoặc D:\)
+    // "idf.espIdfPathWin": "D:\\esp\\v6.0.2\\esp-idf",
+    // "idf.toolsPathWin": "D:\\Espressif\\tools",
+    // "idf.pythonBinPathWin": "D:\\Espressif\\tools\\python\\v6.0.2\\venv\\Scripts\\python.exe",
+    // "idf.portWin": "COM4",
+
+    "idf.flashType": "UART",
+    "idf.extensionActivationMode": "always",
+    "files.associations": {
+        "*.c": "c",
+        "*.h": "c"
+    },
+    "cmake.configureOnOpen": false,
+    "cmake.autoSelectActiveFolder": false,
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/build",
+        "--background-index",
+        "--completion-style=detailed",
+        "--header-insertion=never"
+    ],
+    "vscode-edge-devtools.webhint": false
+}
