@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ADR-004: Wi-Fi Station Connection & Visual State Feedback",
+    "output": "ADR-004-wifi-connection-and-visual-feedback.html",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "viewBox": [1280, 530],
+    "views": [
+      {
+        "id": "wifi-handshake-flow",
+        "label": "Wi-Fi Handshake & Event Flow",
+        "focus": ["kconfig", "app_main", "wifi_sta", "router", "event_loop", "event_group"],
+        "note": "STA Mode initiates WPA2 4-way handshake with AP, synchronizing via FreeRTOS Event Groups."
+      },
+      {
+        "id": "visual-led-feedback",
+        "label": "Visual State Feedback on WS2812B",
+        "focus": ["event_loop", "app_driver", "light_driver", "target_ws2812"],
+        "note": "Real-time network states (Amber breathing, Green solid, Red alert) stream to 8-bit WS2812B via SPI2 DMA."
+      },
+      {
+        "id": "user-interaction-control",
+        "label": "Physical Button & Dual-Target",
+        "focus": ["user_btn", "app_driver", "light_driver", "target_ws2812"],
+        "note": "Independent physical control (single click toggle, double click 8-color cycle, long press breathing) on S3/C3."
+      }
+    ]
+  },
+  "components": [
+    { "id": "kconfig", "type": "security", "label": "Kconfig menuconfig", "sublabel": "SSID & Pass Config", "pos": [50, 260], "size": [160, 60] },
+    { "id": "app_main", "type": "frontend", "label": "app_main Task", "sublabel": "Station Init & Supervision", "pos": [50, 90], "size": [160, 60] },
+    { "id": "wifi_sta", "type": "backend", "label": "esp_wifi STA Core", "sublabel": "WPA2 PSK Handshake", "pos": [360, 90], "size": [170, 60] },
+    { "id": "router", "type": "cloud", "label": "Wi-Fi Router (AP)", "sublabel": "Gateway & DHCP Server", "pos": [360, 260], "size": [170, 60] },
+    { "id": "event_loop", "type": "backend", "label": "esp_event Loop", "sublabel": "STA_START / GOT_IP / FAIL", "pos": [680, 90], "size": [170, 60] },
+    { "id": "event_group", "type": "messagebus", "label": "FreeRTOS Event Group", "sublabel": "CONNECTED / FAIL Bits", "pos": [1000, 90], "size": [170, 60] },
+    { "id": "app_driver", "type": "frontend", "label": "app_driver Dispatcher", "sublabel": "Visual Status & Gestures", "pos": [680, 260], "size": [170, 60] },
+    { "id": "light_driver", "type": "backend", "label": "light_driver Layer", "sublabel": "SPI2 DMA Waveform Engine", "pos": [1000, 260], "size": [170, 60] },
+    { "id": "user_btn", "type": "external", "label": "Boot Button HAL", "sublabel": "GPIO 0 (S3) / GPIO 9 (C3)", "pos": [680, 420], "size": [170, 60] },
+    { "id": "target_ws2812", "type": "external", "label": "WS2812B 8-Bit Strip", "sublabel": "GPIO 4 DIN (Amber/Green/Red)", "pos": [1000, 420], "size": [170, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Application Config & Supervision Layer", "wraps": ["kconfig", "app_main"] },
+    { "kind": "region", "label": "ESP-IDF Wireless Core & Infrastructure", "wraps": ["wifi_sta", "router", "event_loop", "event_group"] },
+    { "kind": "region", "label": "Visual Feedback & Hardware Execution Layer", "wraps": ["app_driver", "light_driver", "user_btn", "target_ws2812"] }
+  ],
+  "connections": [
+    { "id": "kconfig-to-main", "from": "kconfig", "to": "app_main", "label": "Inject Credentials", "labelDy": -24, "fromSide": "top", "toSide": "bottom" },
+    { "id": "main-to-wifi", "from": "app_main", "to": "wifi_sta", "label": "wifi_station_init", "fromSide": "right", "toSide": "left" },
+    { "id": "wifi-to-router", "from": "wifi_sta", "to": "router", "label": "4-Way Handshake", "labelDy": 24, "fromSide": "bottom", "toSide": "top" },
+    { "id": "wifi-to-loop", "from": "wifi_sta", "to": "event_loop", "label": "Post Net Events", "fromSide": "right", "toSide": "left" },
+    { "id": "loop-to-group", "from": "event_loop", "to": "event_group", "label": "Set Event Bits", "fromSide": "right", "toSide": "left" },
+    { "id": "loop-to-driver", "from": "event_loop", "to": "app_driver", "label": "Trigger LED Status", "labelDy": 24, "fromSide": "bottom", "toSide": "top" },
+    { "id": "driver-to-light", "from": "app_driver", "to": "light_driver", "label": "Color & Breath Cmd", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "light-to-target", "from": "light_driver", "to": "target_ws2812", "label": "SPI2 DMA @ 3.2MHz", "variant": "emphasis", "labelDy": 24, "fromSide": "bottom", "toSide": "top" },
+    { "id": "btn-to-driver", "from": "user_btn", "to": "app_driver", "label": "Click / Double / Hold", "labelDy": -24, "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Kết Nối Wi-Fi Station & FreeRTOS Event Groups",
+      "items": [
+        "Cấu hình Wi-Fi linh hoạt qua menuconfig Kconfig thay vì gán tĩnh trong code C.",
+        "Đồng bộ hóa bất đồng bộ qua Event Group (CONNECTED / FAIL) giải phóng 100% CPU."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Hệ Thống Phản Hồi Thị Giác Trực Quan WS2812B",
+      "items": [
+        "Thanh LED WS2812B 8 hạt trên GPIO 4 báo hiệu trạng thái mạng bằng màu sắc trực tiếp.",
+        "Thở Vàng/Cam khi kết nối, sáng Xanh lá khi có IP, và báo Đỏ khi mất kết nối."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Chuẩn Hóa Đa Mục Tiêu & Bảo Vệ Toolchain",
+      "items": [
+        "Tự động chọn cấu hình bo mạch cho cả ESP32-S3 (GPIO 0) và ESP32-C3 (GPIO 9).",
+        "Lọc component bằng set(COMPONENTS main) tăng tốc 50% build và chống crash GCC 15."
+      ]
+    }
+  ]
+}
