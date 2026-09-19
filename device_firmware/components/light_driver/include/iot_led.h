@@ -19,6 +19,8 @@
 extern "C" {
 #endif
 
+#include "esp_err.h"
+#include "driver/gpio.h"
 #include "driver/ledc.h"
 
 #define HW_TIMER_GROUP (0)                                 /**< Hardware timer group */

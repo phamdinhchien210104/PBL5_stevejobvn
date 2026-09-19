@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ADR-003: Smart Light Drivers & Hardware Abstraction Layer",
+    "output": "ADR-003-light-drivers-and-button-modernization.html",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "viewBox": [1280, 530],
+    "views": [
+      {
+        "id": "button-gesture-flow",
+        "label": "Button & Gesture Dispatch Flow",
+        "focus": ["user_interaction", "iot_button", "btn_gpio", "btn_adc", "app_driver", "light_driver"],
+        "note": "Multi-action gestures (Single click toggle, Double click 8-color cycle, Long press breathing) on Boot or external button."
+      },
+      {
+        "id": "ws2812-spi-dma-flow",
+        "label": "WS2812B Hardware SPI DMA",
+        "focus": ["app_driver", "light_driver", "ws2812_driver", "target_ws2812"],
+        "note": "Hardware SPI2 MOSI @ 3.2MHz encodes 800kHz NZR waveform directly to 8-bit WS2812B strip on GPIO 4 with zero CPU jitter."
+      },
+      {
+        "id": "nvs-persistence-hygiene",
+        "label": "NVS Flash & Team Git Hygiene",
+        "focus": ["light_driver", "app_storage", "ide_config"],
+        "note": "Auto-recovery on boot and NVS write on change; team-wide User Settings isolation in Git."
+      }
+    ]
+  },
+  "components": [
+    { "id": "user_interaction", "type": "external", "label": "User Interaction", "sublabel": "Boot / External Button", "pos": [40, 100], "size": [140, 60] },
+    { "id": "iot_button", "type": "frontend", "label": "iot_button Manager", "sublabel": "Debounce & Event Filter", "pos": [260, 100], "size": [145, 60] },
+    { "id": "btn_gpio", "type": "backend", "label": "button_gpio HAL", "sublabel": "GPIO 0 (S3) / GPIO 9 (C3)", "pos": [490, 65], "size": [155, 55] },
+    { "id": "btn_adc", "type": "backend", "label": "button_adc HAL", "sublabel": "esp_adc/adc_oneshot", "pos": [490, 140], "size": [155, 55] },
+    { "id": "app_driver", "type": "frontend", "label": "app_driver Dispatcher", "sublabel": "Single / Double / Long", "pos": [260, 270], "size": [145, 60] },
+    { "id": "light_driver", "type": "backend", "label": "light_driver API Layer", "sublabel": "RGB / HSV / CTB / Breath", "pos": [490, 270], "size": [155, 60] },
+    { "id": "ws2812_driver", "type": "backend", "label": "ws2812_driver Engine", "sublabel": "SPI2 DMA @ 3.2MHz", "pos": [740, 270], "size": [155, 60] },
+    { "id": "target_ws2812", "type": "external", "label": "WS2812B 8-Bit Strip", "sublabel": "GPIO 4 DIN (800kHz NZR)", "pos": [980, 270], "size": [165, 60] },
+    { "id": "app_storage", "type": "database", "label": "app_storage (NVS)", "sublabel": "Flash State Persistence", "pos": [490, 410], "size": [155, 60] },
+    { "id": "ide_config", "type": "security", "label": "Multi-Dev Hygiene", "sublabel": "Template & .gitignore", "pos": [740, 410], "size": [155, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Input & Button Abstraction Layer", "wraps": ["user_interaction", "iot_button", "btn_gpio", "btn_adc"] },
+    { "kind": "region", "label": "Device Control & State Management", "wraps": ["app_driver", "light_driver", "app_storage"] },
+    { "kind": "region", "label": "Hardware Output & Communication", "wraps": ["ws2812_driver", "target_ws2812"] },
+    { "kind": "region", "label": "Engineering & Multi-Developer Settings", "wraps": ["ide_config"] }
+  ],
+  "connections": [
+    { "id": "user-to-iot", "from": "user_interaction", "to": "iot_button", "label": "Press / Release", "fromSide": "right", "toSide": "left" },
+    { "id": "iot-to-gpio", "from": "iot_button", "to": "btn_gpio", "label": "Active-Low Poll", "fromSide": "right", "toSide": "left" },
+    { "id": "iot-to-adc", "from": "iot_button", "to": "btn_adc", "label": "Voltage Sample", "fromSide": "right", "toSide": "left" },
+    { "id": "iot-to-app", "from": "iot_button", "to": "app_driver", "label": "Callback Event", "labelDy": 24, "fromSide": "bottom", "toSide": "top" },
+    { "id": "app-to-light", "from": "app_driver", "to": "light_driver", "label": "Dispatch Action", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "light-to-storage", "from": "light_driver", "to": "app_storage", "label": "Get / Set Flash", "labelDy": 24, "fromSide": "bottom", "toSide": "top" },
+    { "id": "light-to-ws2812", "from": "light_driver", "to": "ws2812_driver", "label": "Pixel Buffer", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "ws2812-to-target", "from": "ws2812_driver", "to": "target_ws2812", "label": "DMA Stream", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "storage-to-ide", "from": "app_storage", "to": "ide_config", "label": "Agnostic Settings", "fromSide": "right", "toSide": "left" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Thanh LED WS2812B 8-Bit NeoPixel",
+      "items": [
+        "Ánh xạ 4-bit SPI LUT (3.2 MHz) tạo xung định thời NZR 800 kHz chuẩn xác nano-giây.",
+        "Bộ đệm DMA truyền dữ liệu tự động, loại bỏ hoàn toàn hiện tượng rung giật màu do ngắt CPU."
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Driver Button Nâng Cấp Toàn Diện",
+      "items": [
+        "Nâng cấp lên chuẩn IDF v6 hiện đại, hỗ trợ nút Boot, nút cơ rời ngoài và cụm phím trở ADC.",
+        "Bổ sung 3 tương tác thông minh: Single click (Bật/Tắt), Double click (Đổi 8 màu), Long press (Thở)."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "NVS Persistence & Cấu Hình Nhóm",
+      "items": [
+        "Lưu trữ NVS bền vững chống mất trạng thái khi cúp nguồn đột ngột.",
+        "Khóa .vscode/settings.json, tạo template và hướng dẫn User Settings tránh 100% xung đột Git."
+      ]
+    }
+  ]
+}

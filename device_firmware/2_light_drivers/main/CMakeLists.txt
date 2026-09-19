@@ -1,5 +1,5 @@
 set(srcs "app_main.c"
-                    "app_driver.c")
+         "app_driver.c")
 set(include_dirs "include")
 
 if(IDF_TARGET STREQUAL "esp32s3")
@@ -9,7 +9,7 @@ else()
 endif()
 
 idf_component_register(SRCS "${srcs}"
-                    INCLUDE_DIRS "${include_dirs}")
+                       INCLUDE_DIRS "${include_dirs}"
+                       PRIV_REQUIRES button app_storage light_driver)
 
 idf_build_set_property(COMPILE_DEFINITIONS "-DDEVELOPMENT_BOARD=\"${DEVELOPMENT_BOARD}\"" APPEND)
-

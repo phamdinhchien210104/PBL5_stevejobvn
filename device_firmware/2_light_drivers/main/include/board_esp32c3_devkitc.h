@@ -15,11 +15,25 @@
 #ifndef __BOARD_ESP32C3_DEVKITC_H__
 #define __BOARD_ESP32C3_DEVKITC_H__
 
-#define LIGHT_BUTTON_GPIO          9    /* This is the button that is used for toggling the output */
+/* Nút nhấn ngoài 2 chân (2-pin button):
+ * - 1 chân nối vào LIGHT_BUTTON_GPIO (mặc định GPIO 9)
+ * - 1 chân nối vào GND của ESP32-C3
+ * - Active level = 0 (khi nhấn chân GPIO được kéo xuống GND, có pull-up nội)
+ */
+#define LIGHT_BUTTON_GPIO          9
 #define LIGHT_BUTTON_ACTIVE_LEVEL  0
 
 /**
- * @brief Light driver Macro
+ * @brief Cấu hình LED WS2818 / WS2812
+ * - Chân I (Data In) nối vào GPIO 4 của ESP32-C3
+ * - Chân Vin nối vào 5V của ESP32-C3
+ * - Chân GND nối vào GND của ESP32-C3
+ */
+#define LIGHT_WS2818_GPIO          4
+#define LIGHT_WS2818_NUM_LEDS      8    /**< Số lượng hạt LED: thanh 8 bóng WS2812S */
+
+/**
+ * @brief Legacy PWM Light driver Macro
  */
 #define LIGHT_GPIO_RED          3
 #define LIGHT_GPIO_GREEN        4

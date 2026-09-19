@@ -84,8 +84,12 @@ docs/*/*/sphinx-warning-log-sanitized.txt
 
 # Local IDE & Agents
 .vscode/*.log
+.vscode/settings.json
+**/.vscode/settings.json
 .codegraph/
 .agents/
 AGENTS.md
 skills-lock.json
 **/.clangd*
+**/.cache/
+*.idx
