@@ -1,0 +1,4 @@
+## IDF Component Manager Manifest File
+dependencies:
+  espressif/network_provisioning: "^1.2.0"
+  espressif/qrcode: "^0.2.0"

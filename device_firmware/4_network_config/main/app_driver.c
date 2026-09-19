@@ -1,10 +1,11 @@
 /*
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
+ * ESP32 Smart Light Example - Chapter 4: Smart Wi-Fi Provisioning (BLE)
+ *
+ * Driver implementation:
+ * 1. Physical Boot button with Multi-Gestures (Click, Double Click, Long Press)
+ * 2. WS2812B NeoPixel 8-Bit Strip via Hardware SPI2 DMA @ 3.2MHz
+ * 3. Dynamic Visual LED indication for BLE Provisioning states
+ */
 
 #include <stdio.h>
 #include "esp_log.h"
@@ -19,18 +20,152 @@
 #include DEVELOPMENT_BOARD
 #include "app_priv.h"
 
-#define TAG "app_driver"
+static const char *TAG = "app_driver";
 
 static bool g_output_state = true;
+static bool s_is_breathing = false;
+static uint8_t s_color_index = 0;
 
+/* Bảng màu mẫu 8 màu RGB trực quan khi nhấn đúp nút Boot */
+static const uint8_t s_colors[][3] = {
+    {255, 0,   0  },  /* 0: Đỏ */
+    {0,   255, 0  },  /* 1: Xanh lá */
+    {0,   0,   255},  /* 2: Xanh dương */
+    {255, 255, 0  },  /* 3: Vàng */
+    {255, 0,   255},  /* 4: Tím hồng */
+    {0,   255, 255},  /* 5: Xanh lơ (Cyan) */
+    {255, 128, 0  },  /* 6: Cam */
+    {255, 255, 255},  /* 7: Trắng ấm */
+};
+#define NUM_COLORS (sizeof(s_colors) / sizeof(s_colors[0]))
+
+/**
+ * @brief Callback khi nhấn 1 lần (Single click / Release): Bật / Tắt đèn
+ */
 static void push_btn_cb(void *arg)
 {
-    app_driver_set_state(!g_output_state);
+    g_output_state = !g_output_state;
+    ESP_LOGI(TAG, "==> [Nút Boot - Nhấn 1 lần]: %s Đèn", g_output_state ? "BẬT" : "TẮT");
+    app_driver_set_state(g_output_state);
 }
 
-void app_driver_init()
+/**
+ * @brief Callback khi nhấn đúp (Double click): Đổi màu sắc tiếp theo
+ */
+static void double_click_cb(void *arg)
 {
-    /* Configure push button */
+    if (!g_output_state) {
+        g_output_state = true;
+        light_driver_set_switch(true);
+    }
+    if (s_is_breathing) {
+        light_driver_breath_stop();
+        s_is_breathing = false;
+    }
+    s_color_index = (s_color_index + 1) % NUM_COLORS;
+    uint8_t r = s_colors[s_color_index][0];
+    uint8_t g = s_colors[s_color_index][1];
+    uint8_t b = s_colors[s_color_index][2];
+    ESP_LOGI(TAG, "==> [Nút Boot - Nhấn 2 lần]: Đổi màu [%d/%d] -> R=%d, G=%d, B=%d",
+             s_color_index + 1, (int)NUM_COLORS, r, g, b);
+    light_driver_set_rgb(r, g, b);
+}
+
+/**
+ * @brief Callback khi nhấn giữ (Long press): Bật / Tắt hiệu ứng thở (Breathing)
+ */
+static void long_press_cb(void *arg)
+{
+    if (!g_output_state) {
+        g_output_state = true;
+        light_driver_set_switch(true);
+    }
+    s_is_breathing = !s_is_breathing;
+    if (s_is_breathing) {
+        uint8_t r = s_colors[s_color_index][0];
+        uint8_t g = s_colors[s_color_index][1];
+        uint8_t b = s_colors[s_color_index][2];
+        ESP_LOGI(TAG, "==> [Nút Boot - Nhấn Giữ]: BẬT hiệu ứng Thở (Breathing) theo màu R=%d, G=%d, B=%d", r, g, b);
+        light_driver_breath_start(r, g, b);
+    } else {
+        ESP_LOGI(TAG, "==> [Nút Boot - Nhấn Giữ]: TẮT hiệu ứng Thở -> Giữ sáng tĩnh");
+        light_driver_breath_stop();
+        light_driver_set_rgb(s_colors[s_color_index][0],
+                             s_colors[s_color_index][1],
+                             s_colors[s_color_index][2]);
+    }
+}
+
+int IRAM_ATTR app_driver_set_state(bool state)
+{
+    g_output_state = state;
+    if (s_is_breathing) {
+        light_driver_breath_stop();
+        s_is_breathing = false;
+    }
+    return light_driver_set_switch(state);
+}
+
+bool app_driver_get_state(void)
+{
+    return light_driver_get_switch();
+}
+
+/**
+ * @brief Điều khiển màu đèn WS2812B phản hồi trực quan trạng thái BLE Provisioning
+ */
+void app_driver_set_prov_status(prov_status_t status)
+{
+    switch (status) {
+    case PROV_STATUS_WAITING:
+        // Đang phát BLE chờ smartphone quét mã / kết nối: Thở Xanh dương (Cyan)
+        ESP_LOGI(TAG, "==> [BLE Prov LED] Đang phát quảng bá BLE... (Đèn thở Xanh dương)");
+        light_driver_set_switch(true);
+        light_driver_breath_start(0, 180, 255);
+        s_is_breathing = true;
+        break;
+
+    case PROV_STATUS_CONNECTING:
+        // Đã nhận SSID/Pass từ smartphone, đang thử kết nối Router: Thở Vàng/Cam
+        ESP_LOGI(TAG, "==> [BLE Prov LED] Đã nhận Wi-Fi từ điện thoại, đang kết nối Router... (Đèn thở Vàng)");
+        light_driver_set_switch(true);
+        light_driver_breath_start(255, 160, 0);
+        s_is_breathing = true;
+        break;
+
+    case PROV_STATUS_SUCCESS:
+        // Cấp phát và kết nối IP thành công: Sáng Xanh lá cây tĩnh
+        ESP_LOGI(TAG, "==> [BLE Prov LED] Cấp phát thành công! Đã có IP. (Đèn xanh lá)");
+        light_driver_breath_stop();
+        s_is_breathing = false;
+        light_driver_set_switch(true);
+        light_driver_set_rgb(0, 255, 0);
+        break;
+
+    case PROV_STATUS_FAILED:
+        // Thất bại do sai mật khẩu hoặc router từ chối: Bật màu Đỏ cảnh báo
+        ESP_LOGE(TAG, "==> [BLE Prov LED] Cấp phát thất bại (sai mật khẩu Wi-Fi)! (Đèn đỏ cảnh báo)");
+        light_driver_breath_stop();
+        s_is_breathing = false;
+        light_driver_set_switch(true);
+        light_driver_set_rgb(255, 0, 0);
+        break;
+
+    default:
+        break;
+    }
+}
+
+void app_driver_init(void)
+{
+    ESP_LOGI(TAG, "==========================================================");
+    ESP_LOGI(TAG, "  Khởi tạo Tầng Driver Chương 4: Smart Wi-Fi Provisioning ");
+    ESP_LOGI(TAG, "==========================================================");
+
+    /* 1. Cấu hình Nút nhấn vật lý (Nút Boot trên S3 GPIO 0 / C3 GPIO 9) */
+    ESP_LOGI(TAG, "1. Cấu hình Nút bấm: GPIO %d, Active Level %d",
+             LIGHT_BUTTON_GPIO, LIGHT_BUTTON_ACTIVE_LEVEL);
+
     button_config_t btn_cfg = {
         .type = BUTTON_TYPE_GPIO,
         .gpio_button_config = {
@@ -38,49 +173,32 @@ void app_driver_init()
             .active_level = LIGHT_BUTTON_ACTIVE_LEVEL,
         },
     };
+
     button_handle_t btn_handle = iot_button_create(&btn_cfg);
     if (btn_handle) {
-        /* Register a callback for a button short press event */
         iot_button_register_cb(btn_handle, BUTTON_SINGLE_CLICK, push_btn_cb);
+        iot_button_register_cb(btn_handle, BUTTON_DOUBLE_CLICK, double_click_cb);
+        iot_button_register_cb(btn_handle, BUTTON_LONG_PRESS_START, long_press_cb);
+
+        ESP_LOGI(TAG, "Đã đăng ký callback nút bấm:");
+        ESP_LOGI(TAG, " - Nhấn 1 lần (Click): Bật/Tắt đèn");
+        ESP_LOGI(TAG, " - Nhấn 2 lần (Double Click): Đổi màu sắc (RGB)");
+        ESP_LOGI(TAG, " - Nhấn giữ (Long Press): Bật/Tắt hiệu ứng thở");
+    } else {
+        ESP_LOGE(TAG, "Khởi tạo iot_button thất bại!");
     }
 
-    /**
-     * @brief Light driver initialization
-     */
+    /* 2. Cấu hình Thanh LED WS2812B (8 hạt trên GPIO 4 qua Hardware SPI DMA) */
+    ESP_LOGI(TAG, "2. Cấu hình Thanh LED WS2812B: Chân DIN GPIO %d, Số hạt: %d",
+             LIGHT_WS2818_GPIO, LIGHT_WS2818_NUM_LEDS);
+
     light_driver_config_t driver_config = {
-        .gpio_red        = LIGHT_GPIO_RED,
-        .gpio_green      = LIGHT_GPIO_GREEN,
-        .gpio_blue       = LIGHT_GPIO_BLUE,
-        .gpio_cold       = LIGHT_GPIO_COLD,
-        .gpio_warm       = LIGHT_GPIO_WARM,
-        .fade_period_ms  = LIGHT_FADE_PERIOD_MS,
-        .blink_period_ms = LIGHT_BLINK_PERIOD_MS,
-        .freq_hz         = LIGHT_FREQ_HZ,
-        .clk_cfg         = LEDC_USE_APB_CLK,
-        .duty_resolution = LEDC_TIMER_11_BIT,
+        .gpio_ws2812 = LIGHT_WS2818_GPIO,
+        .num_leds    = LIGHT_WS2818_NUM_LEDS,
     };
     ESP_ERROR_CHECK(light_driver_init(&driver_config));
-    light_driver_set_switch(true);
-}
 
-int IRAM_ATTR app_driver_set_state(bool state)
-{
-    if (g_output_state != state) {
-        g_output_state = state;
-        if (g_output_state) {
-            // light on
-            ESP_LOGI(TAG, "Light ON");
-            light_driver_set_switch(true);
-        } else {
-            // light off
-            ESP_LOGI(TAG, "Light OFF");
-            light_driver_set_switch(false);
-        }
-    }
-    return ESP_OK;
-}
-
-bool app_driver_get_state(void)
-{
-    return g_output_state;
+    g_output_state = light_driver_get_switch();
+    ESP_LOGI(TAG, "Khởi tạo driver thành công! Trạng thái đèn hiện tại: %s",
+             g_output_state ? "BẬT" : "TẮT");
 }

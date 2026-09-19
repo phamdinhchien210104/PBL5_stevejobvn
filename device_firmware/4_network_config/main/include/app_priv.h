@@ -15,26 +15,44 @@
 #ifndef __APP_PRIVATE_H__
 #define __APP_PRIVATE_H__
 
+#include <stdbool.h>
+#include "esp_err.h"
+
 /**
- * @brief 
- * 
+ * @brief Wi-Fi Provisioning Status for Visual LED Indication
+ */
+typedef enum {
+    PROV_STATUS_WAITING,    /**< Waiting for smartphone to connect via BLE (Breathing Cyan) */
+    PROV_STATUS_CONNECTING, /**< Received credentials from phone, connecting to AP (Breathing Yellow) */
+    PROV_STATUS_SUCCESS,    /**< Provisioning & IP connection successful (Solid Green) */
+    PROV_STATUS_FAILED,     /**< Provisioning credentials failed (Solid Red) */
+} prov_status_t;
+
+/**
+ * @brief Initialize application driver (WS2812B LED strip & button)
  */
 void app_driver_init(void);
 
 /**
- * @brief 
+ * @brief Set on/off state of light
  * 
- * @param state 
- * @return int 
+ * @param state true = ON, false = OFF
+ * @return int ESP_OK on success
  */
 int app_driver_set_state(bool state);
 
 /**
- * @brief 
+ * @brief Get current light switch state
  * 
- * @return true 
- * @return false 
+ * @return true if ON, false if OFF
  */
 bool app_driver_get_state(void);
+
+/**
+ * @brief Indicate Provisioning status via WS2812B NeoPixel 8-bit LED strip
+ * 
+ * @param status Status enum (WAITING, CONNECTING, SUCCESS, FAILED)
+ */
+void app_driver_set_prov_status(prov_status_t status);
 
 #endif /**< __APP_PRIVATE_H__ */
