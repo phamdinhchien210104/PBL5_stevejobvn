@@ -15,26 +15,42 @@
 #ifndef __APP_PRIVATE_H__
 #define __APP_PRIVATE_H__
 
+#include <stdbool.h>
+
 /**
- * @brief 
- * 
+ * @brief Wi-Fi Connection Status for Visual LED Indication
+ */
+typedef enum {
+    WIFI_STATUS_CONNECTING, /**< Attempting connection to AP: breathing yellow/cyan */
+    WIFI_STATUS_CONNECTED,  /**< Got IP successfully: green flash / restore NVS state */
+    WIFI_STATUS_FAILED,     /**< Connection failed after retries: solid/blinking red */
+} wifi_status_t;
+
+/**
+ * @brief Initialize application driver (WS2812B LED strip & button)
  */
 void app_driver_init(void);
 
 /**
- * @brief 
+ * @brief Set on/off state of light
  * 
- * @param state 
- * @return int 
+ * @param state true = ON, false = OFF
+ * @return int ESP_OK on success
  */
 int app_driver_set_state(bool state);
 
 /**
- * @brief 
+ * @brief Get current light switch state
  * 
- * @return true 
- * @return false 
+ * @return true if ON, false if OFF
  */
 bool app_driver_get_state(void);
+
+/**
+ * @brief Indicate Wi-Fi status via WS2812B NeoPixel 8-bit LED strip
+ * 
+ * @param status Status enum (CONNECTING, CONNECTED, FAILED)
+ */
+void app_driver_set_wifi_status(wifi_status_t status);
 
 #endif /**< __APP_PRIVATE_H__ */
