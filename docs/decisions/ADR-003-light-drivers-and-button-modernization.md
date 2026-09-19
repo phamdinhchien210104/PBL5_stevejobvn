@@ -3,6 +3,7 @@
 - **Trạng thái**: Đã phê duyệt (Accepted)
 - **Ngày quyết định**: 2026-09-19
 - **Phạm vi**: `device_firmware/2_light_drivers`, `device_firmware/components/{button, light_driver, app_storage}`, `.vscode/`, `.gitignore`
+- **Sơ đồ kiến trúc tương tác (Archify)**: [Xem sơ đồ trực quan (HTML)](./diagrams/ADR-003-light-drivers-and-button-modernization.html)
 
 ---
 
