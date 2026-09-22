@@ -2,83 +2,95 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "ADR-004: Wi-Fi Station Connection & Visual State Feedback",
+    "title": "ADR-004: Wi-Fi Station, BLE Smart Provisioning & Visual State Architecture",
     "output": "ADR-004-wifi-connection-and-visual-feedback.html",
     "quality_profile": "showcase",
     "animation": "trace",
     "viewBox": [1280, 530],
     "views": [
       {
-        "id": "wifi-handshake-flow",
-        "label": "Wi-Fi Handshake & Event Flow",
-        "focus": ["kconfig", "app_main", "wifi_sta", "router", "event_loop", "event_group"],
-        "note": "STA Mode initiates WPA2 4-way handshake with AP, synchronizing via FreeRTOS Event Groups."
+        "id": "wifi-sta-flow",
+        "label": "Wi-Fi Station & Kconfig (Ch 3)",
+        "focus": ["kconfig", "app_main", "wifi_sta", "router", "event_loop", "app_driver", "target_ws2812"],
+        "note": "Station mode performs WPA2 handshake with router using Kconfig credentials, synchronized via FreeRTOS Event Groups."
+      },
+      {
+        "id": "ble-provisioning-flow",
+        "label": "BLE Smart Provisioning & QR Code (Ch 4)",
+        "focus": ["mobile_app", "ble_prov", "app_main", "nvs_flash", "wifi_sta", "event_loop"],
+        "note": "Smartphone scans ASCII QR code, pairs via BLE Security 1 (PoP abcd1234), provisions Wi-Fi credentials into NVS Flash, and frees BLE memory."
       },
       {
         "id": "visual-led-feedback",
-        "label": "Visual State Feedback on WS2812B",
-        "focus": ["event_loop", "app_driver", "light_driver", "target_ws2812"],
-        "note": "Real-time network states (Amber breathing, Green solid, Red alert) stream to 8-bit WS2812B via SPI2 DMA."
+        "label": "Visual LED Feedback & Hardware Controls",
+        "focus": ["event_loop", "app_driver", "light_driver", "user_btn", "target_ws2812"],
+        "note": "WS2812B NeoPixel 8-LED strip streams live states (Cyan/Amber breathing, Green solid, Red alert) via SPI2 DMA with Boot button control."
       },
       {
-        "id": "user-interaction-control",
-        "label": "Physical Button & Dual-Target",
-        "focus": ["user_btn", "app_driver", "light_driver", "target_ws2812"],
-        "note": "Independent physical control (single click toggle, double click 8-color cycle, long press breathing) on S3/C3."
+        "id": "app-selection-boundary",
+        "label": "Mobile App Architecture (Local vs Cloud)",
+        "focus": ["mobile_app", "ble_prov", "app_main", "wifi_sta", "router"],
+        "note": "Ch 4 uses ESP BLE Provisioning for local onboarding; Ch 5-7 uses ESP RainMaker with Cloud User Association and AWS IoT backend."
       }
     ]
   },
   "components": [
-    { "id": "kconfig", "type": "security", "label": "Kconfig menuconfig", "sublabel": "SSID & Pass Config", "pos": [50, 260], "size": [160, 60] },
-    { "id": "app_main", "type": "frontend", "label": "app_main Task", "sublabel": "Station Init & Supervision", "pos": [50, 90], "size": [160, 60] },
-    { "id": "wifi_sta", "type": "backend", "label": "esp_wifi STA Core", "sublabel": "WPA2 PSK Handshake", "pos": [360, 90], "size": [170, 60] },
-    { "id": "router", "type": "cloud", "label": "Wi-Fi Router (AP)", "sublabel": "Gateway & DHCP Server", "pos": [360, 260], "size": [170, 60] },
-    { "id": "event_loop", "type": "backend", "label": "esp_event Loop", "sublabel": "STA_START / GOT_IP / FAIL", "pos": [680, 90], "size": [170, 60] },
-    { "id": "event_group", "type": "messagebus", "label": "FreeRTOS Event Group", "sublabel": "CONNECTED / FAIL Bits", "pos": [1000, 90], "size": [170, 60] },
-    { "id": "app_driver", "type": "frontend", "label": "app_driver Dispatcher", "sublabel": "Visual Status & Gestures", "pos": [680, 260], "size": [170, 60] },
-    { "id": "light_driver", "type": "backend", "label": "light_driver Layer", "sublabel": "SPI2 DMA Waveform Engine", "pos": [1000, 260], "size": [170, 60] },
-    { "id": "user_btn", "type": "external", "label": "Boot Button HAL", "sublabel": "GPIO 0 (S3) / GPIO 9 (C3)", "pos": [680, 420], "size": [170, 60] },
-    { "id": "target_ws2812", "type": "external", "label": "WS2812B 8-Bit Strip", "sublabel": "GPIO 4 DIN (Amber/Green/Red)", "pos": [1000, 420], "size": [170, 60] }
+    { "id": "mobile_app", "type": "frontend", "label": "Mobile App Matrix", "sublabel": "BLE Prov / RainMaker", "pos": [40, 90], "size": [150, 60] },
+    { "id": "kconfig", "type": "security", "label": "Kconfig menuconfig", "sublabel": "Static Creeds (Ch 3)", "pos": [40, 260], "size": [150, 60] },
+    { "id": "ble_prov", "type": "security", "label": "BLE Prov & Sec 1", "sublabel": "PoP abcd1234 & QR", "pos": [300, 90], "size": [150, 60] },
+    { "id": "app_main", "type": "backend", "label": "Application Core", "sublabel": "wifi_prov_mgr Engine", "pos": [300, 260], "size": [150, 60] },
+    { "id": "nvs_flash", "type": "database", "label": "NVS Flash Storage", "sublabel": "Fast Boot (1.4s NVS)", "pos": [300, 420], "size": [150, 60] },
+    { "id": "wifi_sta", "type": "backend", "label": "esp_wifi STA Core", "sublabel": "WPA2/WPA3 Handshake", "pos": [560, 90], "size": [150, 60] },
+    { "id": "router", "type": "cloud", "label": "Wi-Fi Router (AP)", "sublabel": "Gateway & DHCP Server", "pos": [560, 260], "size": [150, 60] },
+    { "id": "event_loop", "type": "backend", "label": "esp_event Loop", "sublabel": "State Machine Events", "pos": [820, 90], "size": [150, 60] },
+    { "id": "app_driver", "type": "frontend", "label": "app_driver Dispatch", "sublabel": "Visual Status & Gestures", "pos": [820, 260], "size": [150, 60] },
+    { "id": "user_btn", "type": "external", "label": "Boot Button HAL", "sublabel": "GPIO 0 (S3) / GPIO 9 (C3)", "pos": [820, 420], "size": [150, 60] },
+    { "id": "light_driver", "type": "backend", "label": "light_driver Layer", "sublabel": "SPI2 DMA Engine", "pos": [1080, 260], "size": [150, 60] },
+    { "id": "target_ws2812", "type": "external", "label": "WS2812B 8-Bit Strip", "sublabel": "GPIO 4 (4-State LED)", "pos": [1080, 420], "size": [150, 60] }
   ],
   "boundaries": [
-    { "kind": "region", "label": "Application Config & Supervision Layer", "wraps": ["kconfig", "app_main"] },
-    { "kind": "region", "label": "ESP-IDF Wireless Core & Infrastructure", "wraps": ["wifi_sta", "router", "event_loop", "event_group"] },
-    { "kind": "region", "label": "Visual Feedback & Hardware Execution Layer", "wraps": ["app_driver", "light_driver", "user_btn", "target_ws2812"] }
+    { "kind": "region", "label": "Provisioning & Credentials Input", "wraps": ["mobile_app", "kconfig", "ble_prov"] },
+    { "kind": "region", "label": "Application Core & Persistent Storage", "wraps": ["app_main", "nvs_flash"] },
+    { "kind": "region", "label": "ESP-IDF Wireless Infrastructure", "wraps": ["wifi_sta", "router", "event_loop"] },
+    { "kind": "region", "label": "Visual Feedback & Hardware Execution", "wraps": ["app_driver", "user_btn", "light_driver", "target_ws2812"] }
   ],
   "connections": [
-    { "id": "kconfig-to-main", "from": "kconfig", "to": "app_main", "label": "Inject Credentials", "labelDy": -24, "fromSide": "top", "toSide": "bottom" },
-    { "id": "main-to-wifi", "from": "app_main", "to": "wifi_sta", "label": "wifi_station_init", "fromSide": "right", "toSide": "left" },
+    { "id": "app-to-ble", "from": "mobile_app", "to": "ble_prov", "label": "Scan QR & BLE Link", "labelDy": -20, "fromSide": "right", "toSide": "left" },
+    { "id": "kconfig-to-main", "from": "kconfig", "to": "app_main", "label": "Static Creeds (Ch 3)", "labelDy": 24, "fromSide": "right", "toSide": "left" },
+    { "id": "ble-to-main", "from": "ble_prov", "to": "app_main", "label": "Deliver Wi-Fi Creeds", "labelDy": 24, "fromSide": "bottom", "toSide": "top" },
+    { "id": "main-to-nvs", "from": "app_main", "to": "nvs_flash", "label": "Save / Load NVS", "labelDy": 24, "fromSide": "bottom", "toSide": "top" },
+    { "id": "main-to-wifi", "from": "app_main", "to": "wifi_sta", "label": "wifi_sta_init", "fromSide": "right", "toSide": "left" },
     { "id": "wifi-to-router", "from": "wifi_sta", "to": "router", "label": "4-Way Handshake", "labelDy": 24, "fromSide": "bottom", "toSide": "top" },
     { "id": "wifi-to-loop", "from": "wifi_sta", "to": "event_loop", "label": "Post Net Events", "fromSide": "right", "toSide": "left" },
-    { "id": "loop-to-group", "from": "event_loop", "to": "event_group", "label": "Set Event Bits", "fromSide": "right", "toSide": "left" },
     { "id": "loop-to-driver", "from": "event_loop", "to": "app_driver", "label": "Trigger LED Status", "labelDy": 24, "fromSide": "bottom", "toSide": "top" },
-    { "id": "driver-to-light", "from": "app_driver", "to": "light_driver", "label": "Color & Breath Cmd", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
-    { "id": "light-to-target", "from": "light_driver", "to": "target_ws2812", "label": "SPI2 DMA @ 3.2MHz", "variant": "emphasis", "labelDy": 24, "fromSide": "bottom", "toSide": "top" },
-    { "id": "btn-to-driver", "from": "user_btn", "to": "app_driver", "label": "Click / Double / Hold", "labelDy": -24, "fromSide": "top", "toSide": "bottom" }
+    { "id": "btn-to-driver", "from": "user_btn", "to": "app_driver", "label": "Click / Double / Hold", "labelDy": -24, "fromSide": "top", "toSide": "bottom" },
+    { "id": "driver-to-light", "from": "app_driver", "to": "light_driver", "label": "Color & Breath Cmd", "labelDy": 24, "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "light-to-target", "from": "light_driver", "to": "target_ws2812", "label": "SPI2 DMA @ 3.2MHz", "variant": "emphasis", "labelDy": 24, "fromSide": "bottom", "toSide": "top" }
   ],
   "cards": [
     {
       "dot": "cyan",
-      "title": "Kết Nối Wi-Fi Station & FreeRTOS Event Groups",
+      "title": "Cấp Phát Thông Minh BLE & Khắc Phục Treo App",
       "items": [
-        "Cấu hình Wi-Fi linh hoạt qua menuconfig Kconfig thay vì gán tĩnh trong code C.",
-        "Đồng bộ hóa bất đồng bộ qua Event Group (CONNECTED / FAIL) giải phóng 100% CPU."
+        "In mã QR ASCII trực tiếp ra console, bảo mật Security 1 với PoP abcd1234.",
+        "Tách biệt WIFI_EVENT và tự động reset state machine khi sai mật khẩu.",
+        "Thu hồi 100% bộ nhớ Bluetooth khi có IP, NVS Flash tự kết nối trong 1.4s."
       ]
     },
     {
       "dot": "emerald",
-      "title": "Hệ Thống Phản Hồi Thị Giác Trực Quan WS2812B",
+      "title": "Phân Tách Ranh Giới Ứng Dụng Di Động",
       "items": [
-        "Thanh LED WS2812B 8 hạt trên GPIO 4 báo hiệu trạng thái mạng bằng màu sắc trực tiếp.",
-        "Thở Vàng/Cam khi kết nối, sáng Xanh lá khi có IP, và báo Đỏ khi mất kết nối."
+        "Chương 4: ESP BLE Provisioning cấp phát cục bộ qua 4 GATT endpoints chuẩn.",
+        "Chương 5, 6, 7: ESP RainMaker kèm Cloud User Association và phân vùng fctry."
       ]
     },
     {
       "dot": "amber",
-      "title": "Chuẩn Hóa Đa Mục Tiêu & Bảo Vệ Toolchain",
+      "title": "Phản Hồi Thị Giác Trực Quan WS2812B",
       "items": [
-        "Tự động chọn cấu hình bo mạch cho cả ESP32-S3 (GPIO 0) và ESP32-C3 (GPIO 9).",
-        "Lọc component bằng set(COMPONENTS main) tăng tốc 50% build và chống crash GCC 15."
+        "Thanh 8 LED WS2812B trên GPIO 4 phát xung Hardware SPI2 DMA không giật lag.",
+        "Bốn trạng thái màu: Thở Cyan (Chờ BLE), Thở Vàng (Kết nối), Xanh lá (Có IP), Đỏ (Lỗi)."
       ]
     }
   ]

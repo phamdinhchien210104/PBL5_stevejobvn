@@ -1,0 +1,41 @@
+menu "Local Control Configuration"
+
+    config LOCAL_CTRL_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "MyHomeWiFi"
+        help
+            SSID of the Access Point to connect to for Local Control over LAN.
+
+    config LOCAL_CTRL_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "12345678"
+        help
+            Password of the Access Point to connect to.
+
+    config LOCAL_CTRL_MAXIMUM_RETRY
+        int "Maximum Wi-Fi Connection Retries"
+        default 5
+        help
+            Number of retries before reporting Wi-Fi connection failure.
+
+    config LOCAL_CTRL_MDNS_HOST_NAME
+        string "mDNS Hostname for Local HTTPS Control"
+        default "my_esp_ctrl_device"
+        help
+            Local domain name advertised via mDNS (e.g. my_esp_ctrl_device.local).
+
+    config LOCAL_CTRL_BLE_ENABLE
+        bool "Enable Fallback Bluetooth LE Local Control (GATT Server)"
+        default y
+        help
+            Enables standalone Bluetooth LE GATT Server for offline local control
+            when Wi-Fi router is offline or unreachable (Section 8.5.3).
+
+    config LOCAL_CTRL_BLE_DEVICE_NAME
+        string "Bluetooth LE Device Advertisement Name"
+        depends on LOCAL_CTRL_BLE_ENABLE
+        default "ESP32-LOCAL-LIGHT"
+        help
+            Device name advertised over Bluetooth LE for local smartphone scanning.
+
+endmenu
