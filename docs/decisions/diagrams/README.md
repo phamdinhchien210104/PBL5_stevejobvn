@@ -25,6 +25,7 @@ Mỗi quyết định kiến trúc được mô hình hóa qua hai tệp song h�
 | **ADR-003** | **Driver WS2812B Hardware SPI DMA & Nút Bấm Vật Lý Đa Thao Tác** | [ADR-003.md](../ADR-003-light-drivers-and-button-modernization.md) | [**Xem Sơ Đồ HTML**](./ADR-003-light-drivers-and-button-modernization.html)<br>([JSON](./ADR-003-light-drivers-and-button-modernization.architecture.json)) | 1. *Button & Gesture Dispatch Flow* (Single/Double/Long Click)<br>2. *WS2812B Hardware SPI DMA* (Phát xung 800kHz chuẩn xác nano-giây)<br>3. *NVS Flash & Team Git Hygiene* (Lưu trạng thái & chống xung đột) |
 | **ADR-004** | **Kết Nối Wi-Fi STA, Cấp Phát Thông Minh BLE, LED Thị Giác & App Boundary** | [ADR-004.md](../ADR-004-wifi-connection-and-visual-feedback.md) | [**Xem Sơ Đồ HTML**](./ADR-004-wifi-connection-and-visual-feedback.html)<br>([JSON](./ADR-004-wifi-connection-and-visual-feedback.architecture.json)) | 1. *Wi-Fi Station & Kconfig (Ch 3)* (Bắt tay WPA2 & FreeRTOS Event Groups)<br>2. *BLE Smart Provisioning (Ch 4)* (Mã QR, PoP `abcd1234`, NVS fast boot, thu hồi RAM BLE)<br>3. *Visual LED Feedback* (4 trạng thái đèn WS2812B: Cyan/Vàng/Xanh/Đỏ)<br>4. *Mobile App Decision* (Phân định ESP BLE Prov vs RainMaker) |
 | **ADR-005** | **Điều Khiển Cục Bộ Kênh Đôi Wi-Fi HTTPS mDNS & Bluetooth LE GATT** | [ADR-005.md](../ADR-005-local-control-https-mdns-ble.md) | [**Xem Sơ Đồ HTML**](./ADR-005-local-control-https-mdns-ble.html)<br>([JSON](./ADR-005-local-control-https-mdns-ble.architecture.json)) | 1. *Wi-Fi HTTPS & mDNS (8.5.1)* (mDNS `my_esp_ctrl_device.local`, HTTPS 443 TLS, JSON `status`)<br>2. *Fallback Bluetooth LE GATT (8.5.3)* (Service `0x00FF`, Char `0x0001` Bật/Tắt không cần router)<br>3. *Python Script Verification (8.5.2)* (Kịch bản tự động kiểm thử GET/POST LAN)<br>4. *Hardware HAL & LED Execution* (WS2812B Hardware SPI2 DMA @ 3.2MHz, Nút Boot HAL) |
+| **ADR-006** | **Điều Khiển Từ Xa ESP RainMaker Đám Mây, Assisted Claiming & Thiết Bị Bóng (Device Shadow)** | [ADR-006.md](../ADR-006-esp-rainmaker-cloud-control.md) | [**Xem Sơ Đồ HTML**](./ADR-006-esp-rainmaker-cloud-control.html)<br>([JSON](./ADR-006-esp-rainmaker-cloud-control.architecture.json)) | 1. *Cloud MQTT & Device Shadow Downlink (9.4.1)* (AWS IoT Core MQTT, đồng bộ bóng thiết bị TSL HSV & LED thật)<br>2. *BLE Assisted Claiming & Provisioning (9.4.2)* (Cấp phát Wi-Fi & nạp chứng chỉ TLS X.509 vào phân vùng `fctry`)<br>3. *SNTP, Schedule & OTA Services (9.4.5)* (Đồng bộ thời gian chuẩn, lịch trình offline độc lập mạng, OTA rollback an toàn)<br>4. *Physical Button Gesture Uplink (9.4.6)* (Nút Boot đa cử chỉ điều khiển LED & lập tức báo cáo trạng thái lên đám mây) |
 
 ---
 
@@ -71,6 +72,43 @@ Sơ đồ [`ADR-005-local-control-https-mdns-ble.html`](./ADR-005-local-control-
    - Tầng điều phối phần cứng `app_driver` phát xung định thời nano-giây xuống thanh LED WS2812B 8 hạt qua Hardware SPI2 DMA @ 3.2MHz trên GPIO 4 và xử lý ngắt nút bấm Boot vật lý đa cử chỉ.
 
 ---
+
+## 🔍 Chi Tiết Sơ Đồ ADR-006 (ESP RainMaker Đám Mây & Thiết Bị Bóng)
+
+Sơ đồ [`ADR-006-esp-rainmaker-cloud-control.html`](./ADR-006-esp-rainmaker-cloud-control.html) mô tả toàn cảnh kiến trúc điều khiển đám mây ESP RainMaker, luồng chứng thực Assisted Claiming và đồng bộ hóa hai chiều (Two-Way Device Shadow) cho **Chương 9 (`device_firmware/5_rainmaker`)**:
+
+```text
++-------------------------------------------------------------------------------------------------------------------------+
+|                                    SƠ ĐỒ KIẾN TRÚC TỔNG THỂ ADR-006 (RAINMAKER CLOUD & DEVICE SHADOW)                   |
++------------------------------+------------------------------+-----------------------------+-----------------------------+
+| 1. CLIENT & CLOUD DOMAIN     | 2. INGESTION & TRANSPORT     | 3. EMBEDDED NODE & SHADOW   | 4. HARDWARE HAL & LED EXEC  |
++------------------------------+------------------------------+-----------------------------+-----------------------------+
+| [ RainMaker Mobile App ] ----> [ BLE Provisioning (NimBLE) ]-> [ RainMaker Node Core ] ------> [ app_driver HAL ]          |
+| • iOS / Android App          | • Assisted Claiming Handshake| • Lightbulb Device Node     | • Nút Boot đa cử chỉ        |
+| • Quét mã QR BLE             | • Cấp phát Wi-Fi STA         | • Callback write_cb()       | • Đồng bộ LED & Cloud Shadow|
+|              |               |                              |              |              |              |              |
+|              v               | [ LAN Local Control ] ------->              v              |              v              |
+| [ AWS IoT Core Cloud ] ------> • mDNS HTTPS Cục bộ          | [ Device Shadow (TSL) ] <---+ [ light_driver Engine ]     |
+| • MQTT Mutual TLS Port 8883  |                              | • Power, Brightness,        | • Hardware SPI2 DMA @ 3.2MHz|
+| • AWS Serverless Broker      | [ MQTT TLS Client ] ---------> • Hue, Saturation (HSV)       |              |              |
+| • Quản lý chứng chỉ X.509    | • Trao đổi khóa an toàn      |              ^              |              v              |
+|                              | • Phân vùng 'fctry' NVS      | [ Cloud Services Engine ] --+ [ WS2812B 8-Bit NeoPixel ]   |
+|                              |                              | • SNTP Time Sync & Timezone | • DIN GPIO 4 NeoPixel       |
+|                              |                              | • Offline Scheduling Service|                             |
+|                              |                              | • OTA Upgrade Rollback Safe |                             |
+|                              |                              | • Remote System Reset / Fcty|                             |
++------------------------------+------------------------------+-----------------------------+-----------------------------+
+```
+
+### 4 Góc nhìn chuyên đề (Curated Interactive Views):
+1. **Cloud MQTT & Device Shadow Downlink (9.4.1)**:
+   - Dòng lệnh điều khiển từ đám mây AWS IoT Core truyền qua MQTT TLS tới lõi RainMaker, giải mã các tham số TSL (Bật/Tắt, Độ sáng, Màu Hue, Độ bão hòa Saturation) và đồng bộ xuống phần cứng LED WS2812B.
+2. **BLE Assisted Claiming & Provisioning (9.4.2)**:
+   - Quy trình nạp chứng chỉ đám mây không cần nạp thủ công từ PC: App điện thoại kết nối Bluetooth LE NimBLE, gửi mã xác thực Claiming, ESP32 tạo cặp khóa và tải chứng chỉ thiết bị TLS X.509 lưu vào phân vùng bảo mật `fctry`.
+3. **SNTP, Schedule & OTA Services (9.4.5)**:
+   - Hệ sinh thái dịch vụ tích hợp sẵn: Tự đồng bộ giờ thực chuẩn xác qua SNTP `pool.ntp.org`, kích hoạt lịch trình hẹn giờ offline (vẫn chạy đúng giờ ngay cả khi mất mạng Wi-Fi/Internet), và kiểm soát nâng cấp firmware OTA an toàn có cơ chế chống brick.
+4. **Physical Button Gesture Uplink (9.4.6)**:
+   - Dòng phản hồi ngược từ thao tác vật lý: Khi người dùng bấm nút Boot trên mạch (nhấp đơn đổi Bật/Tắt, nhấp đúp xoay vòng bảng màu HSV), driver lập tức đổi màu LED và phát lệnh `esp_rmaker_param_update_and_report` để cập nhật bóng thiết bị trên điện thoại trong mili-giây.
 
 ---
 

@@ -1,11 +1,17 @@
-/* ESP32-C3 Light Example
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
+/*
+ * ESP32-S3 & ESP32-C3 Smart Light Project
+ * Chapter 9: Remote Control through ESP RainMaker (Practice 9.4)
+ *
+ * Implements:
+ * 1. 9.4.1 Cloud Communication Node, Lightbulb Device, and TSL Parameters (Power, Brightness, Hue, Saturation)
+ * 2. 9.4.2 Assisted Claiming with TLS X.509 certificates stored in fctry NVS partition
+ * 3. 9.4.5 Basic Services: SNTP Time Sync, Timezone, Offline Scheduling, OTA, System service & Local Control
+ * 4. 9.4.6 Integration with WS2812B Hardware SPI2 DMA @ 3.2MHz and Physical Boot Button Gestures
+ *
+ * Targets:
+ * - ESP32-S3-DevKitC-1-N16R8 (Boot GPIO 0, LED GPIO 4)
+ * - ESP32-C3-DevKitM-1 (Boot GPIO 9, LED GPIO 4)
+ */
 
 #include <stdio.h>
 #include <string.h>
@@ -29,6 +35,7 @@
 #include "esp_rmaker_standard_devices.h"
 #include "esp_rmaker_ota.h"
 #include "esp_rmaker_schedule.h"
+#include "esp_rmaker_utils.h"
 
 #include "app_wifi.h"
 #include "app_storage.h"
@@ -42,75 +49,72 @@ extern const char ota_server_cert[] asm("_binary_server_crt_start");
 
 /* Callback to handle commands received from the RainMaker cloud */
 static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_param_t *param,
-            const esp_rmaker_param_val_t val, void *priv_data, esp_rmaker_write_ctx_t *ctx)
+                          const esp_rmaker_param_val_t val, void *priv_data, esp_rmaker_write_ctx_t *ctx)
 {
     if (ctx) {
         ESP_LOGI(TAG, "Received write request via : %s", esp_rmaker_device_cb_src_to_str(ctx->src));
     }
     const char *device_name = esp_rmaker_device_get_name(device);
     const char *param_name = esp_rmaker_param_get_name(param);
+
     if (strcmp(param_name, ESP_RMAKER_DEF_POWER_NAME) == 0) {
-        ESP_LOGI(TAG, "Received value = %s for %s - %s",
-                val.val.b? "true" : "false", device_name, param_name);
+        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %s",
+                 device_name, param_name, val.val.b ? "ON" : "OFF");
         app_light_set_power(val.val.b);
     } else if (strcmp(param_name, ESP_RMAKER_DEF_BRIGHTNESS_NAME) == 0) {
-        ESP_LOGI(TAG, "Received value = %d for %s - %s",
-                val.val.i, device_name, param_name);
+        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
+                 device_name, param_name, val.val.i);
         app_light_set_brightness(val.val.i);
     } else if (strcmp(param_name, ESP_RMAKER_DEF_HUE_NAME) == 0) {
-        ESP_LOGI(TAG, "Received value = %d for %s - %s",
-                val.val.i, device_name, param_name);
+        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
+                 device_name, param_name, val.val.i);
         app_light_set_hue(val.val.i);
     } else if (strcmp(param_name, ESP_RMAKER_DEF_SATURATION_NAME) == 0) {
-        ESP_LOGI(TAG, "Received value = %d for %s - %s",
-                val.val.i, device_name, param_name);
+        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
+                 device_name, param_name, val.val.i);
         app_light_set_saturation(val.val.i);
     } else {
-        /* Silently ignoring invalid params */
+        ESP_LOGW(TAG, "Ignoring unhandled param: %s", param_name);
         return ESP_OK;
     }
+
     esp_rmaker_param_update_and_report(param, val);
     return ESP_OK;
 }
 
-void app_main()
+void app_main(void)
 {
-    int i = 0;
     esp_err_t err = ESP_OK;
-    ESP_LOGE(TAG, "app_main");
+    ESP_LOGI(TAG, "==========================================================");
+    ESP_LOGI(TAG, "  ESP RainMaker Smart Light Firmware (Chapter 9) Initializing ");
+    ESP_LOGI(TAG, "==========================================================");
 
-    /**
-     * @brief NVS Flash initialization
-     */
-    ESP_LOGI(TAG, "NVS Flash initialization");
+    /* 1. NVS Flash initialization */
+    ESP_LOGI(TAG, "NVS Flash initialization...");
     app_storage_init();
-    
-    /**
-     * @brief Application driver initialization
-     */
-    ESP_LOGI(TAG, "Application driver initialization");
+
+    /* 2. Application driver initialization (WS2812B Hardware SPI2 DMA @ 3.2MHz + Button HAL) */
+    ESP_LOGI(TAG, "Application driver initialization...");
     app_driver_init();
 
-    /**
-     * @brief Initialize Wi-Fi. Note that, this should be called before esp_rmaker_init()
-     */
+    /* 3. Initialize Wi-Fi netif and event handlers (must precede esp_rmaker_node_init) */
+    ESP_LOGI(TAG, "Initializing Wi-Fi Provisioning Netif...");
     app_wifi_init();
-    
-    /**
-     * @brief Initialize the ESP RainMaker Agent.
-     * Note that this should be called after app_wifi_init() but before app_wifi_start()
-     * */
+
+    /* 4. Initialize ESP RainMaker Agent */
+    ESP_LOGI(TAG, "Initializing ESP RainMaker Node...");
     esp_rmaker_config_t rainmaker_cfg = {
         .enable_time_sync = false,
     };
-    esp_rmaker_node_t *node = esp_rmaker_node_init(&rainmaker_cfg, "ESP RainMaker Device", "Lightbulb");
+    esp_rmaker_node_t *node = esp_rmaker_node_init(&rainmaker_cfg, "ESP RainMaker Smart Light", "Lightbulb");
     if (!node) {
-        ESP_LOGE(TAG, "Could not initialise node. Aborting!!!");
+        ESP_LOGE(TAG, "Could not initialize RainMaker node. Aborting!!!");
         vTaskDelay(pdMS_TO_TICKS(5000));
         abort();
     }
 
-    /* Create a device and add the relevant parameters to it */
+    /* 5. Create Lightbulb device with standard parameters */
+    ESP_LOGI(TAG, "Creating standard Lightbulb device and parameters...");
     light_device = esp_rmaker_lightbulb_device_create("Light", NULL, DEFAULT_POWER);
     esp_rmaker_device_add_cb(light_device, write_cb, NULL);
 
@@ -120,39 +124,46 @@ void app_main()
 
     esp_rmaker_node_add_device(node, light_device);
 
-    /* Enable OTA */
+    /* 6. Enable standard services (Section 9.4.5) */
+    ESP_LOGI(TAG, "Configuring SNTP Time Synchronization & Timezone Service...");
+    esp_rmaker_time_config_t time_config = {
+        .sntp_server_name = "pool.ntp.org",
+    };
+    esp_rmaker_time_sync_init(&time_config);
+    esp_rmaker_timezone_service_enable();
+
+    ESP_LOGI(TAG, "Enabling Offline Scheduling Service...");
+    esp_rmaker_schedule_enable();
+
+    ESP_LOGI(TAG, "Enabling OTA Upgrade Service...");
     esp_rmaker_ota_config_t ota_config = {
         .server_cert = ota_server_cert,
     };
     esp_rmaker_ota_enable(&ota_config, OTA_USING_PARAMS);
 
-    /* Enable timezone service which will be require for setting appropriate timezone
-     * from the phone apps for scheduling to work correctly.
-     * For more information on the various ways of setting timezone, please check
-     * https://rainmaker.espressif.com/docs/time-service.html.
-     */
-    esp_rmaker_timezone_service_enable();
+    ESP_LOGI(TAG, "Enabling System Service (Reboot & Factory Reset)...");
+    esp_rmaker_system_service_enable(NULL);
 
-    /* Enable scheduling. */
-    esp_rmaker_schedule_enable();
-
-    /* Start the ESP RainMaker Agent */
+    /* 7. Start the ESP RainMaker Agent */
+    ESP_LOGI(TAG, "Starting ESP RainMaker Agent...");
     esp_rmaker_start();
 
-    /* Start the Wi-Fi.
-     * If the node is provisioned, it will start connection attempts,
-     * else, it will start Wi-Fi provisioning. The function will return
-     * after a connection has been successfully established
-     */
+    /* 8. Start Wi-Fi Provisioning with Assisted Claiming */
+    ESP_LOGI(TAG, "Starting Wi-Fi Provisioning (BLE with Assisted Claiming)...");
     err = app_wifi_start(POP_TYPE_RANDOM);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Could not start Wifi. Aborting!!!");
+        ESP_LOGE(TAG, "Could not start Wi-Fi. Aborting!!!");
         vTaskDelay(pdMS_TO_TICKS(5000));
         abort();
     }
 
+    ESP_LOGI(TAG, "RainMaker Smart Light initialized successfully! Online and connected to Cloud.");
+
+    uint32_t uptime_sec = 0;
     while (1) {
-        ESP_LOGI(TAG, "[%02d] Hello world!", i++);
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        uptime_sec += 10;
+        ESP_LOGI(TAG, "[Uptime: %lu s] Node Online - Switch: %s",
+                 (unsigned long)uptime_sec, app_driver_get_state() ? "ON" : "OFF");
     }
 }

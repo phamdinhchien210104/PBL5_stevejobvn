@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ADR-006: ESP RainMaker Cloud Control Architecture & Hardware Shadow",
+    "output": "ADR-006-esp-rainmaker-cloud-control.html",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "viewBox": [1320, 560],
+    "views": [
+      {
+        "id": "cloud-downlink-flow",
+        "label": "Cloud MQTT & Device Shadow Downlink (9.4.1)",
+        "focus": ["aws_cloud", "mqtt_tls", "rmaker_core", "device_shadow", "app_driver", "light_driver", "ws2812_strip"],
+        "note": "AWS IoT Core MQTT pushes property updates (power, brightness, hue, saturation) to RainMaker core, syncing device shadow and hardware LED."
+      },
+      {
+        "id": "assisted-claiming-flow",
+        "label": "BLE Assisted Claiming & Provisioning (9.4.2)",
+        "focus": ["rainmaker_app", "ble_prov", "rmaker_core", "mqtt_tls", "aws_cloud"],
+        "note": "Smartphone app connects over NimBLE to provision Wi-Fi credentials and claims device certificate stored into fctry NVS partition."
+      },
+      {
+        "id": "embedded-services-flow",
+        "label": "SNTP, Schedule & OTA Services (9.4.5)",
+        "focus": ["services_mgr", "rmaker_core", "device_shadow"],
+        "note": "Embedded services handle SNTP time sync, local offline scheduling, cloud OTA rollback protection, and remote system reset."
+      },
+      {
+        "id": "physical-gesture-sync",
+        "label": "Physical Button Gesture Uplink (9.4.6)",
+        "focus": ["boot_button", "app_driver", "device_shadow", "rmaker_core", "mqtt_tls", "aws_cloud", "light_driver", "ws2812_strip"],
+        "note": "Boot button clicks trigger local light toggle/hue cycle and instantly report updated state to RainMaker Cloud Device Shadow."
+      }
+    ]
+  },
+  "components": [
+    { "id": "rainmaker_app", "type": "frontend", "label": "RainMaker App", "sublabel": "iOS / Android Mobile", "pos": [40, 110], "size": [150, 60] },
+    { "id": "aws_cloud", "type": "cloud", "label": "RainMaker Cloud", "sublabel": "AWS IoT Core Broker", "pos": [40, 330], "size": [150, 60] },
+    { "id": "ble_prov", "type": "backend", "label": "BLE Provisioning", "sublabel": "NimBLE Assisted Claiming", "pos": [270, 110], "size": [150, 60] },
+    { "id": "local_ctrl", "type": "backend", "label": "LAN Local Control", "sublabel": "mDNS HTTPS Fallback", "pos": [270, 220], "size": [150, 60] },
+    { "id": "mqtt_tls", "type": "security", "label": "MQTT TLS Client", "sublabel": "Mutual Auth (Port 8883)", "pos": [270, 330], "size": [150, 60] },
+    { "id": "services_mgr", "type": "backend", "label": "Cloud Services", "sublabel": "SNTP / Schedule / OTA", "pos": [610, 80], "size": [160, 60] },
+    { "id": "rmaker_core", "type": "backend", "label": "RainMaker Node Core", "sublabel": "Lightbulb Device Node", "pos": [610, 220], "size": [160, 60] },
+    { "id": "device_shadow", "type": "database", "label": "Device Shadow", "sublabel": "TSL Parameters (HSV)", "pos": [610, 360], "size": [160, 60] },
+    { "id": "app_driver", "type": "backend", "label": "app_driver HAL", "sublabel": "State Sync & Gestures", "pos": [870, 220], "size": [160, 60] },
+    { "id": "boot_button", "type": "external", "label": "Boot Button HAL", "sublabel": "GPIO 0 (S3) / GPIO 9 (C3)", "pos": [870, 380], "size": [160, 60] },
+    { "id": "light_driver", "type": "backend", "label": "light_driver Layer", "sublabel": "HSV to RGB24 Engine", "pos": [1120, 220], "size": [160, 60] },
+    { "id": "ws2812_strip", "type": "external", "label": "WS2812B 8-Bit NeoPixel", "sublabel": "Hardware SPI2 DMA (GPIO 4)", "pos": [1120, 380], "size": [160, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Mobile Client & Cloud Domain", "wraps": ["rainmaker_app", "aws_cloud"] },
+    { "kind": "region", "label": "Ingestion & Security Transport Plane", "wraps": ["ble_prov", "local_ctrl", "mqtt_tls"] },
+    { "kind": "region", "label": "ESP RainMaker Embedded Node & Shadow", "wraps": ["services_mgr", "rmaker_core", "device_shadow"] },
+    { "kind": "region", "label": "Hardware Abstraction & WS2812B Driver", "wraps": ["app_driver", "boot_button", "light_driver", "ws2812_strip"] }
+  ],
+  "connections": [
+    { "id": "app-to-ble", "from": "rainmaker_app", "to": "ble_prov", "label": "BLE Claiming", "labelAt": [230, 125], "fromSide": "right", "toSide": "left" },
+    { "id": "app-to-local", "from": "rainmaker_app", "to": "local_ctrl", "label": "LAN HTTPS", "labelAt": [230, 205], "fromSide": "right", "toSide": "left" },
+    { "id": "cloud-to-mqtt", "from": "aws_cloud", "to": "mqtt_tls", "label": "TLS MQTT", "labelAt": [230, 345], "fromSide": "right", "toSide": "left" },
+    { "id": "ble-to-core", "from": "ble_prov", "to": "rmaker_core", "label": "Cert Exchange", "labelAt": [468, 125], "fromSide": "right", "toSide": "left" },
+    { "id": "local-to-core", "from": "local_ctrl", "to": "rmaker_core", "label": "Local Dispatch", "labelAt": [562, 235], "fromSide": "right", "toSide": "left" },
+    { "id": "mqtt-to-core", "from": "mqtt_tls", "to": "rmaker_core", "label": "Downlink Delta", "labelAt": [468, 375], "fromSide": "right", "toSide": "left" },
+    { "id": "services-to-core", "from": "services_mgr", "to": "rmaker_core", "label": "Service Events", "labelAt": [690, 175], "fromSide": "bottom", "toSide": "top" },
+    { "id": "core-to-shadow", "from": "rmaker_core", "to": "device_shadow", "label": "Param Sync", "labelAt": [690, 315], "fromSide": "bottom", "toSide": "top" },
+    { "id": "core-to-driver", "from": "rmaker_core", "to": "app_driver", "label": "Command Dispatch", "labelDy": 20, "fromSide": "right", "toSide": "left" },
+    { "id": "driver-to-shadow", "from": "app_driver", "to": "device_shadow", "label": "Report Uplink", "labelDy": 20, "fromSide": "bottom", "toSide": "right" },
+    { "id": "button-to-driver", "from": "boot_button", "to": "app_driver", "label": "Multi-Gestures", "labelAt": [950, 330], "fromSide": "top", "toSide": "bottom" },
+    { "id": "driver-to-light", "from": "app_driver", "to": "light_driver", "label": "HSV Stream", "labelDy": 20, "fromSide": "right", "toSide": "left" },
+    { "id": "light-to-ws2812", "from": "light_driver", "to": "ws2812_strip", "label": "SPI DMA 3.2MHz", "labelAt": [1200, 330], "fromSide": "bottom", "toSide": "top" }
+  ]
+}
