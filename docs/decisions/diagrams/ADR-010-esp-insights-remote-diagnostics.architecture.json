@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ADR-010: ESP Insights Remote Diagnostics & Crash Telemetry via Shared RainMaker MQTT Transport",
+    "output": "ADR-010-esp-insights-remote-diagnostics.html",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "viewBox": [1320, 560],
+    "views": [
+      {
+        "id": "shared-mqtt-architecture",
+        "label": "Shared MQTT & Memory Optimization",
+        "focus": ["app_insights", "rmaker_mqtt", "cloud_mqtt", "insights_dashboard", "app_main"],
+        "note": "ESP Insights routes diagnostics data over RainMaker's existing TLS/MQTT channel, saving 30-40 KB of precious SRAM."
+      },
+      {
+        "id": "metrics-telemetry-pipeline",
+        "label": "Quantitative Metrics & Custom Events",
+        "focus": ["app_driver", "esp_diag_metrics", "app_insights", "rmaker_mqtt", "insights_dashboard"],
+        "note": "Automatic telemetry collects heap and Wi-Fi RSSI; custom ESP_DIAG_EVENT captures user light actions."
+      },
+      {
+        "id": "crash-dump-recovery",
+        "label": "Crash Simulation & Core Dump Recovery",
+        "focus": ["crash_trigger", "panic_handler", "flash_coredump", "insights_agent", "app_insights", "insights_dashboard"],
+        "note": "5-click gesture triggers artificial panic; ELF coredump is captured in 64KB flash partition and transmitted on reboot."
+      },
+      {
+        "id": "dual-target-platform",
+        "label": "Dual-Target Hardware Platform",
+        "focus": ["target_hardware", "app_main", "partition_table", "flash_coredump", "app_driver"],
+        "note": "Dual-target support verified with 1920KB dual OTA, 64KB coredump, and 24KB fctry partition layout on 4MB flash."
+      }
+    ]
+  },
+  "components": [
+    { "id": "app_insights", "type": "backend", "label": "Insights Adapter", "sublabel": "Custom Transport", "pos": [40, 70], "size": [165, 56] },
+    { "id": "rmaker_mqtt", "type": "backend", "label": "RainMaker MQTT", "sublabel": "Shared TLS Socket", "pos": [310, 70], "size": [165, 56] },
+    { "id": "cloud_mqtt", "type": "external", "label": "RainMaker Cloud", "sublabel": "AWS IoT Core Broker", "pos": [580, 70], "size": [165, 56] },
+    { "id": "insights_dashboard", "type": "frontend", "label": "Insights Dashboard", "sublabel": "Web Diagnostic UI", "pos": [850, 70], "size": [165, 56] },
+    { "id": "esp_diag_metrics", "type": "database", "label": "Diagnostic Metrics", "sublabel": "Heap & Wi-Fi RSSI", "pos": [1120, 70], "size": [160, 56] },
+
+    { "id": "crash_trigger", "type": "frontend", "label": "5-Click Button Gest", "sublabel": "Crash Test Callback", "pos": [40, 230], "size": [165, 56] },
+    { "id": "panic_handler", "type": "security", "label": "Panic / Exception", "sublabel": "Guru Meditation", "pos": [310, 230], "size": [165, 56] },
+    { "id": "flash_coredump", "type": "database", "label": "Flash 'coredump'", "sublabel": "64KB ELF Partition", "pos": [580, 230], "size": [165, 56] },
+    { "id": "insights_agent", "type": "backend", "label": "Insights Core Agent", "sublabel": "Log Hook & RTC Store", "pos": [850, 230], "size": [165, 56] },
+    { "id": "app_driver", "type": "frontend", "label": "WS2812B Light Driver", "sublabel": "ESP_DIAG_EVENT Log", "pos": [1120, 230], "size": [160, 56] },
+
+    { "id": "target_hardware", "type": "frontend", "label": "Dual SoC Target", "sublabel": "ESP32-C3 & ESP32-S3", "pos": [40, 390], "size": [165, 56] },
+    { "id": "app_main", "type": "backend", "label": "Firmware Runtime", "sublabel": "app_main.c", "pos": [310, 390], "size": [165, 56] },
+    { "id": "partition_table", "type": "database", "label": "4MB Partition Layout", "sublabel": "1920K Dual OTA + 64K", "pos": [580, 390], "size": [165, 56] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Shared MQTT & Cloud Telemetry Transport Layer", "wraps": ["app_insights", "rmaker_mqtt", "cloud_mqtt", "insights_dashboard", "esp_diag_metrics"] },
+    { "kind": "region", "label": "Edge Fault Detection & Crash Dump Persistence", "wraps": ["crash_trigger", "panic_handler", "flash_coredump", "insights_agent", "app_driver"] },
+    { "kind": "region", "label": "Multi-Target Hardware Platform & Partition Layout", "wraps": ["target_hardware", "app_main", "partition_table"] }
+  ],
+  "connections": [
+    { "id": "insights-to-mqtt", "from": "app_insights", "to": "rmaker_mqtt", "label": "Route data_send" },
+    { "id": "mqtt-to-cloud", "from": "rmaker_mqtt", "to": "cloud_mqtt", "label": "Single TLS Channel" },
+    { "id": "cloud-to-dash", "from": "cloud_mqtt", "to": "insights_dashboard", "label": "MQTT Ingest" },
+    { "id": "dash-to-metrics", "from": "insights_dashboard", "to": "esp_diag_metrics", "label": "Visualize" },
+
+    { "id": "gest-to-panic", "from": "crash_trigger", "to": "panic_handler", "label": "Trigger Crash" },
+    { "id": "panic-to-flash", "from": "panic_handler", "to": "flash_coredump", "label": "Save ELF Dump" },
+    { "id": "flash-to-agent", "from": "flash_coredump", "to": "insights_agent", "label": "Read on Reboot" },
+    { "id": "agent-to-insights", "from": "insights_agent", "to": "app_insights", "label": "Enqueue Dump", "fromSide": "top", "toSide": "bottom", "labelAt": [445, 160] },
+    { "id": "driver-to-metrics", "from": "app_driver", "to": "esp_diag_metrics", "label": "Report Events", "fromSide": "top", "toSide": "bottom", "labelAt": [1200, 160] },
+
+    { "id": "hw-to-runtime", "from": "target_hardware", "to": "app_main", "label": "Init Hardware" },
+    { "id": "runtime-to-parts", "from": "app_main", "to": "partition_table", "label": "Mount Partitions" },
+    { "id": "parts-to-coredump", "from": "partition_table", "to": "flash_coredump", "label": "Offset 0x3E6000", "fromSide": "top", "toSide": "bottom", "labelAt": [663, 320] }
+  ]
+}
