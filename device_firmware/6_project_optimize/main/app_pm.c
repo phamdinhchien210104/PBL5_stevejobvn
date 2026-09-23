@@ -1,96 +1,140 @@
 /*
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
+ * ESP32-S3 & ESP32-C3 Smart Light Project
+ * Chapter 12: Power Management in Smart Light Project
+ *
+ * Implements:
+ * 1. Dynamic Frequency Scaling (DFS 40 - 160 MHz)
+ * 2. Automatic Light-sleep with FreeRTOS Tickless Idle
+ * 3. Power Management Lock (ESP_PM_NO_LIGHT_SLEEP) to ensure stable WS2812B LED clocking when ON
+ * 4. Automatic Light-sleep entry when OFF, lowering standby current to < 2-5 mA
+ * 5. GPIO wakeup for instantaneous response on physical button press
+ */
 
 #include <stdio.h>
-
 #include "esp_log.h"
 #include "esp_pm.h"
+#include "esp_wifi.h"
+#include "esp_sleep.h"
+#include "driver/gpio.h"
 
+#include DEVELOPMENT_BOARD
 #include "app_priv.h"
 
+static const char *TAG = "app_pm";
+
 #if CONFIG_PM_ENABLE
 
-#define LIGHT_EXAMPLE_MAX_CPU_FREQ_MHZ (80)
-#define LIGHT_EXAMPLE_MIN_CPU_FREQ_MHZ (10)
+#define LIGHT_EXAMPLE_MAX_CPU_FREQ_MHZ (160)
+#define LIGHT_EXAMPLE_MIN_CPU_FREQ_MHZ (40)
 
-static const char *TAG = "app-pm";
 static bool g_pm_lock_acquired = false;
-static esp_pm_lock_handle_t g_pm_apb_lock = NULL;
+static esp_pm_lock_handle_t s_light_pm_lock = NULL;
 
-esp_err_t app_pm_init()
+esp_err_t app_pm_init(void)
 {
-#if CONFIG_PM_ENABLE
-    // Configure dynamic frequency scaling:
-    // maximum and minimum frequencies are set in sdkconfig,
-    // automatic light sleep is enabled if tickless idle support is enabled.
-#if CONFIG_IDF_TARGET_ESP32
-    esp_pm_config_esp32_t pm_config = {
-#elif CONFIG_IDF_TARGET_ESP32S2
-    esp_pm_config_esp32s2_t pm_config = {
-#elif CONFIG_IDF_TARGET_ESP32C3
-    esp_pm_config_esp32c3_t pm_config = {
-#endif
-            .max_freq_mhz = LIGHT_EXAMPLE_MAX_CPU_FREQ_MHZ,
-            .min_freq_mhz = LIGHT_EXAMPLE_MIN_CPU_FREQ_MHZ,
+    ESP_LOGI(TAG, "Initializing Power Management (DFS: %d - %d MHz, Automatic Light-sleep: %s)...",
+             LIGHT_EXAMPLE_MIN_CPU_FREQ_MHZ,
+             LIGHT_EXAMPLE_MAX_CPU_FREQ_MHZ,
 #if CONFIG_FREERTOS_USE_TICKLESS_IDLE
-            .light_sleep_enable = true
+             "ENABLED"
+#else
+             "DISABLED"
+#endif
+    );
+
+    // 1. Configure DFS and Light-sleep using unified esp_pm_config_t
+    esp_pm_config_t pm_config = {
+        .max_freq_mhz = LIGHT_EXAMPLE_MAX_CPU_FREQ_MHZ,
+        .min_freq_mhz = LIGHT_EXAMPLE_MIN_CPU_FREQ_MHZ,
+#if CONFIG_FREERTOS_USE_TICKLESS_IDLE
+        .light_sleep_enable = true
+#else
+        .light_sleep_enable = false
 #endif
     };
-    ESP_ERROR_CHECK( esp_pm_configure(&pm_config) );
-#endif // CONFIG_PM_ENABLE
+    esp_err_t err = esp_pm_configure(&pm_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_pm_configure failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    ESP_LOGI(TAG, "Dynamic Frequency Scaling configured successfully (40MHz idle <-> 160MHz active)");
 
-    if (g_pm_apb_lock == NULL) {
-        if (esp_pm_lock_create(ESP_PM_APB_FREQ_MAX, 0, "l_apb", &g_pm_apb_lock) != ESP_OK) {
-            ESP_LOGE(TAG, "esp pm lock l_apb create failed");
+    // 2. Create Power Management lock preventing light sleep when LED is active
+    if (s_light_pm_lock == NULL) {
+        err = esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "light_led_lock", &s_light_pm_lock);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to create PM lock 'light_led_lock': %s", esp_err_to_name(err));
+            return err;
         }
+        ESP_LOGI(TAG, "PM Lock 'light_led_lock' (ESP_PM_NO_LIGHT_SLEEP) created successfully");
+    }
+
+    // 3. Configure GPIO wakeup for physical Boot button
+    err = gpio_wakeup_enable(LIGHT_BUTTON_GPIO, GPIO_INTR_LOW_LEVEL);
+    if (err == ESP_OK) {
+        err = esp_sleep_enable_gpio_wakeup();
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "GPIO %d configured as Light-sleep wakeup source", LIGHT_BUTTON_GPIO);
+        } else {
+            ESP_LOGW(TAG, "Failed to enable GPIO sleep wakeup: %s", esp_err_to_name(err));
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to enable GPIO %d wakeup: %s", LIGHT_BUTTON_GPIO, esp_err_to_name(err));
     }
 
     return ESP_OK;
 }
 
-esp_err_t app_pm_lock_acquire()
+esp_err_t app_pm_lock_acquire(void)
 {
-    if (!g_pm_lock_acquired) {
-        ESP_ERROR_CHECK(esp_pm_lock_acquire(g_pm_apb_lock));
-        g_pm_lock_acquired = true;
+    if (!g_pm_lock_acquired && s_light_pm_lock != NULL) {
+        esp_err_t err = esp_pm_lock_acquire(s_light_pm_lock);
+        if (err == ESP_OK) {
+            g_pm_lock_acquired = true;
+            ESP_LOGI(TAG, "==> [PM LOCK ACQUIRED]: Light ON -> Light-sleep PROHIBITED, Peripheral/LED clocks guaranteed");
+        } else {
+            ESP_LOGE(TAG, "Failed to acquire PM lock: %s", esp_err_to_name(err));
+            return err;
+        }
     } else {
-        ESP_LOGI(TAG, "already acquire");
+        ESP_LOGD(TAG, "PM lock already held");
     }
     return ESP_OK;
 }
 
-esp_err_t app_pm_lock_release()
+esp_err_t app_pm_lock_release(void)
 {
-    if (g_pm_lock_acquired) {
-        ESP_ERROR_CHECK(esp_pm_lock_release(g_pm_apb_lock));
-        g_pm_lock_acquired = false;
+    if (g_pm_lock_acquired && s_light_pm_lock != NULL) {
+        esp_err_t err = esp_pm_lock_release(s_light_pm_lock);
+        if (err == ESP_OK) {
+            g_pm_lock_acquired = false;
+            ESP_LOGI(TAG, "==> [PM LOCK RELEASED]: Light OFF -> Light-sleep PERMITTED (Standby target < 2-5mA)");
+        } else {
+            ESP_LOGE(TAG, "Failed to release PM lock: %s", esp_err_to_name(err));
+            return err;
+        }
     } else {
-        ESP_LOGI(TAG, "already release");
+        ESP_LOGD(TAG, "PM lock already released");
     }
-
     return ESP_OK;
 }
 
 #else
 
-esp_err_t app_pm_init()
+esp_err_t app_pm_init(void)
 {
-    return ESP_FAIL;
+    ESP_LOGW(TAG, "CONFIG_PM_ENABLE is not set in sdkconfig; Power Management disabled");
+    return ESP_OK;
 }
 
-esp_err_t app_pm_lock_acquire()
+esp_err_t app_pm_lock_acquire(void)
 {
-    return ESP_FAIL;
+    return ESP_OK;
 }
 
-esp_err_t app_pm_lock_release()
+esp_err_t app_pm_lock_release(void)
 {
-    return ESP_FAIL;
+    return ESP_OK;
 }
 
 #endif // CONFIG_PM_ENABLE

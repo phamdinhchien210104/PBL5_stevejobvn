@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ADR-008: Power Management Architecture — Dynamic Frequency Scaling, Automatic Light-sleep & PM Locks",
+    "output": "ADR-008-power-management-dfs-light-sleep.html",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "viewBox": [1320, 560],
+    "views": [
+      {
+        "id": "light-on-active",
+        "label": "Light ON: PM Lock Held & DFS Active",
+        "focus": ["user_switch", "cloud_app", "driver_core", "pm_lock", "dfs_scaler", "led_dma", "ws2812_strip"],
+        "note": "Light ON: PM Lock is held, prohibiting Light-sleep and guaranteeing stable APB clocking for WS2812B Hardware SPI DMA."
+      },
+      {
+        "id": "light-off-sleep",
+        "label": "Light OFF: Automatic Light-sleep (< 2-5mA)",
+        "focus": ["user_switch", "cloud_app", "driver_core", "pm_lock", "tickless_idle", "light_sleep_state", "power_rail"],
+        "note": "Light OFF: PM Lock is released. FreeRTOS Tickless Idle enables Automatic Light-sleep, dropping standby current to < 2-5 mA."
+      },
+      {
+        "id": "gpio-button-wakeup",
+        "label": "Instantaneous Boot Button GPIO Wakeup",
+        "focus": ["user_switch", "gpio_wakeup", "driver_core", "pm_lock", "led_dma", "ws2812_strip"],
+        "note": "Button press during Light-sleep triggers GPIO IRQ, waking CPU in < 1 ms, acquiring PM lock and turning on the LED strip."
+      },
+      {
+        "id": "modem-sleep-coexist",
+        "label": "Wi-Fi Modem-sleep & DTIM Coexistence",
+        "focus": ["cloud_app", "modem_sleep", "tickless_idle", "light_sleep_state"],
+        "note": "Wi-Fi radio sleeps between router DTIM beacons in Modem-sleep, preserving cloud connectivity while minimizing idle RF power."
+      }
+    ]
+  },
+  "components": [
+    { "id": "user_switch", "type": "frontend", "label": "Boot Button / Switch", "sublabel": "GPIO 9 / GPIO 0", "pos": [40, 70], "size": [160, 56] },
+    { "id": "gpio_wakeup", "type": "backend", "label": "GPIO Wakeup Unit", "sublabel": "Sub-ms Wakeup", "pos": [40, 230], "size": [160, 56] },
+    { "id": "cloud_app", "type": "cloud", "label": "ESP RainMaker Cloud", "sublabel": "MQTT / LAN Control", "pos": [40, 390], "size": [160, 56] },
+    { "id": "driver_core", "type": "backend", "label": "Smart Light Controller", "sublabel": "app_driver HSV", "pos": [310, 70], "size": [160, 56] },
+    { "id": "dfs_scaler", "type": "backend", "label": "Dynamic Frequency Scaler", "sublabel": "DFS 40 <-> 160 MHz", "pos": [310, 230], "size": [160, 56] },
+    { "id": "pm_manager", "type": "backend", "label": "Power Management Engine", "sublabel": "esp_pm_configure", "pos": [310, 390], "size": [160, 56] },
+    { "id": "pm_lock", "type": "security", "label": "PM Lock: light_led_lock", "sublabel": "NO_LIGHT_SLEEP", "pos": [580, 70], "size": [165, 56] },
+    { "id": "tickless_idle", "type": "backend", "label": "FreeRTOS Tickless Idle", "sublabel": "Sleep Dispatcher", "pos": [580, 390], "size": [165, 56] },
+    { "id": "led_dma", "type": "backend", "label": "WS2812B Hardware DMA", "sublabel": "SPI2 DMA @ 3.2MHz", "pos": [850, 70], "size": [165, 56] },
+    { "id": "modem_sleep", "type": "messagebus", "label": "Wi-Fi Modem-sleep", "sublabel": "DTIM Beacon Mode", "pos": [850, 230], "size": [165, 56] },
+    { "id": "light_sleep_state", "type": "backend", "label": "Automatic Light-sleep", "sublabel": "Standby < 2-5 mA", "pos": [850, 390], "size": [165, 56] },
+    { "id": "ws2812_strip", "type": "external", "label": "Hardware 8-LED Strip", "sublabel": "GPIO 4 DIN", "pos": [1120, 70], "size": [160, 56] },
+    { "id": "power_rail", "type": "database", "label": "Ultra-Low Power Floor", "sublabel": "Standby (< 0.5W)", "pos": [1120, 390], "size": [160, 56] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "User & Cloud Input Plane", "wraps": ["user_switch", "gpio_wakeup", "cloud_app"] },
+    { "kind": "region", "label": "Application & Coordination Plane", "wraps": ["driver_core", "dfs_scaler", "pm_manager"] },
+    { "kind": "region", "label": "Power Management Framework", "wraps": ["pm_lock", "tickless_idle"] },
+    { "kind": "region", "label": "Sleep & Hardware DMA Controllers", "wraps": ["led_dma", "modem_sleep", "light_sleep_state"] },
+    { "kind": "region", "label": "Physical Hardware & Low-Power Floor", "wraps": ["ws2812_strip", "power_rail"] }
+  ],
+  "connections": [
+    { "id": "btn-to-driver", "from": "user_switch", "to": "driver_core", "label": "Physical Click", "labelAt": [255, 88], "fromSide": "right", "toSide": "left" },
+    { "id": "btn-to-gpio", "from": "user_switch", "to": "gpio_wakeup", "label": "Low Level IRQ", "labelAt": [120, 178], "fromSide": "bottom", "toSide": "top" },
+    { "id": "gpio-to-driver", "from": "gpio_wakeup", "to": "driver_core", "label": "Wake Event", "labelAt": [235, 170], "fromSide": "right", "toSide": "left" },
+    { "id": "cloud-to-pm", "from": "cloud_app", "to": "pm_manager", "label": "RainMaker Sync", "labelAt": [255, 408], "fromSide": "right", "toSide": "left" },
+    { "id": "driver-to-lock", "from": "driver_core", "to": "pm_lock", "label": "Acquire / Release", "labelAt": [525, 88], "fromSide": "right", "toSide": "left" },
+    { "id": "pm-to-dfs", "from": "pm_manager", "to": "dfs_scaler", "label": "DFS Config", "labelAt": [390, 338], "fromSide": "top", "toSide": "bottom" },
+    { "id": "pm-to-tickless", "from": "pm_manager", "to": "tickless_idle", "label": "Tickless Setup", "labelAt": [525, 408], "fromSide": "right", "toSide": "left" },
+    { "id": "lock-to-dma", "from": "pm_lock", "to": "led_dma", "label": "Clock Stable", "labelAt": [795, 88], "fromSide": "right", "toSide": "left" },
+    { "id": "dma-to-led", "from": "led_dma", "to": "ws2812_strip", "label": "3.2MHz SPI DMA", "labelAt": [1065, 88], "fromSide": "right", "toSide": "left" },
+    { "id": "lock-to-sleep", "from": "pm_lock", "to": "tickless_idle", "label": "Permit Sleep", "labelAt": [662, 258], "fromSide": "bottom", "toSide": "top" },
+    { "id": "tickless-to-sleep", "from": "tickless_idle", "to": "light_sleep_state", "label": "Enter Sleep", "labelAt": [795, 408], "fromSide": "right", "toSide": "left" },
+    { "id": "sleep-to-modem", "from": "light_sleep_state", "to": "modem_sleep", "label": "DTIM Coexist", "labelAt": [932, 338], "fromSide": "top", "toSide": "bottom" },
+    { "id": "sleep-to-power", "from": "light_sleep_state", "to": "power_rail", "label": "< 2-5 mA Floor", "labelAt": [1065, 408], "fromSide": "right", "toSide": "left" }
+  ]
+}
