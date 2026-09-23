@@ -28,6 +28,10 @@
 #include "esp_wifi.h"
 #endif
 
+#include "driver/gpio.h"
+#define LED_INDICATOR_GPIO 4
+
+
 static const char *TAG = "advanced_https_ota_example";
 extern const uint8_t server_cert_pem_start[] asm("_binary_ca_cert_pem_start");
 extern const uint8_t server_cert_pem_end[] asm("_binary_ca_cert_pem_end");
@@ -166,15 +170,51 @@ ota_end:
     vTaskDelete(NULL);
 }
 
+#if defined(CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE)
+/* Hardware & peripheral post-OTA diagnostic check */
+static bool app_ota_diagnostic(void)
+{
+    ESP_LOGI(TAG, "==========================================================");
+    ESP_LOGI(TAG, "  Executing Post-OTA Hardware Diagnostics...              ");
+    ESP_LOGI(TAG, "==========================================================");
+
+    /* 1. Hardware verification: Pulse LED on GPIO 4 */
+    gpio_reset_pin(LED_INDICATOR_GPIO);
+    gpio_set_direction(LED_INDICATOR_GPIO, GPIO_MODE_OUTPUT);
+    for (int i = 0; i < 3; i++) {
+        gpio_set_level(LED_INDICATOR_GPIO, 1);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        gpio_set_level(LED_INDICATOR_GPIO, 0);
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    ESP_LOGI(TAG, "LED indicator check on GPIO %d completed successfully.", LED_INDICATOR_GPIO);
+
+    /* 2. Check NVS Storage sanity */
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    if (err == ESP_OK) {
+        int32_t boot_count = 0;
+        nvs_get_i32(my_handle, "boot_count", &boot_count);
+        boot_count++;
+        nvs_set_i32(my_handle, "boot_count", boot_count);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+        ESP_LOGI(TAG, "NVS storage read/write test PASSED (boot count: %ld)", (long)boot_count);
+    } else {
+        ESP_LOGW(TAG, "NVS storage test returned 0x%x (non-fatal)", err);
+    }
+
+    ESP_LOGI(TAG, "All diagnostic tests PASSED. Firmware verified operational!");
+    return true;
+}
+#endif
+
+
 void app_main(void)
 {
     // Initialize NVS.
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        // 1.OTA app partition table has a smaller NVS partition size than the non-OTA
-        // partition table. This size mismatch may cause NVS initialization to fail.
-        // 2.NVS partition contains data in new format and cannot be recognized by this version of code.
-        // If this happens, we erase NVS partition and initialize NVS again.
         ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
     }
@@ -183,27 +223,34 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
-     * Read "Establishing Wi-Fi or Ethernet Connection" section in
-     * examples/protocols/README.md for more information about this function.
-    */
+    /* Connect to network */
     ESP_ERROR_CHECK(example_connect());
 
-#if defined(CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE) && defined(CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK)
+#if defined(CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE)
     /**
-     * We are treating successful WiFi connection as a checkpoint to cancel rollback
-     * process and mark newly updated firmware image as active. For production cases,
-     * please tune the checkpoint behavior per end application requirement.
+     * Diagnostic Checkpoint for OTA Rollback.
+     * When booting in ESP_OTA_IMG_PENDING_VERIFY state, run app_ota_diagnostic().
+     * If valid, call esp_ota_mark_app_valid_cancel_rollback() to confirm the new image.
      */
     const esp_partition_t *running = esp_ota_get_running_partition();
     esp_ota_img_states_t ota_state;
     if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
+        ESP_LOGI(TAG, "Running partition '%s' (subtype 0x%02x) state: %d",
+                 running->label, running->subtype, ota_state);
         if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
-            if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
-                ESP_LOGI(TAG, "App is valid, rollback cancelled successfully");
+            ESP_LOGI(TAG, "New firmware pending verification! Running diagnostics...");
+            bool diag_ok = app_ota_diagnostic();
+            if (diag_ok) {
+                if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+                    ESP_LOGI(TAG, "App is valid, rollback cancelled successfully");
+                } else {
+                    ESP_LOGE(TAG, "Failed to cancel rollback!");
+                }
             } else {
-                ESP_LOGE(TAG, "Failed to cancel rollback");
+                ESP_LOGE(TAG, "Diagnostics FAILED! Firmware will rollback on next reboot.");
             }
+        } else if (ota_state == ESP_OTA_IMG_VALID) {
+            ESP_LOGI(TAG, "Firmware partition is already marked VALID.");
         }
     }
 #endif

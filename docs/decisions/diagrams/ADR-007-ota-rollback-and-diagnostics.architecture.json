@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ADR-007: Over-the-Air (OTA) Firmware Upgrade, Diagnostics & Rollback Architecture",
+    "output": "ADR-007-ota-rollback-and-diagnostics.html",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "viewBox": [1360, 580],
+    "views": [
+      {
+        "id": "param-ota-flow",
+        "label": "OTA Using Parameters Workflow (11.3.1)",
+        "focus": ["dev_cli", "ota_server", "ota_client", "ota_manager", "flash_partitions", "bootloader"],
+        "note": "Developer specifies URL via RainMaker CLI. ESP32 downloads new binary from local server and writes to inactive slot."
+      },
+      {
+        "id": "cloud-topic-ota",
+        "label": "OTA Using MQTT Topics Workflow (11.3.2)",
+        "focus": ["rmaker_cloud", "ota_client", "ota_manager", "flash_partitions", "bootloader"],
+        "note": "ESP RainMaker Cloud Dashboard distributes batch OTA job via MQTT topic. Device downloads image and verifies checksum."
+      },
+      {
+        "id": "diagnostic-eval-flow",
+        "label": "Post-OTA Diagnostic & Health Evaluation",
+        "focus": ["ota_manager", "diag_engine", "light_driver", "ws2812_strip", "storage_nvs"],
+        "note": "On first boot into PENDING_VERIFY, app_ota_diagnostic checks WS2812B pulse and NVS integrity before canceling rollback."
+      },
+      {
+        "id": "rollback-recovery",
+        "label": "Bootloader Auto-Rollback on Crash / Failure",
+        "focus": ["ota_manager", "bootloader", "otadata_sector", "flash_partitions"],
+        "note": "If new firmware crashes or diagnostics fail, 2nd stage bootloader marks partition INVALID and rolls back to previous slot."
+      }
+    ]
+  },
+  "components": [
+    { "id": "dev_cli", "type": "frontend", "label": "RainMaker CLI / curl", "sublabel": "Developer Tooling", "pos": [40, 80], "size": [160, 60] },
+    { "id": "ota_server", "type": "backend", "label": "Local OTA Test Server", "sublabel": "HTTP 206 Range Server", "pos": [270, 80], "size": [160, 60] },
+    { "id": "rmaker_cloud", "type": "cloud", "label": "RainMaker Cloud", "sublabel": "Dashboard OTA Jobs", "pos": [40, 360], "size": [160, 60] },
+    { "id": "ota_client", "type": "backend", "label": "esp_https_ota Client", "sublabel": "Chunk Stream & Checksum", "pos": [270, 360], "size": [160, 60] },
+    { "id": "diag_engine", "type": "backend", "label": "app_ota_diagnostic", "sublabel": "Hardware & Storage Check", "pos": [540, 80], "size": [170, 60] },
+    { "id": "storage_nvs", "type": "database", "label": "NVS Flash Storage", "sublabel": "app_storage Sanity Check", "pos": [540, 220], "size": [170, 60] },
+    { "id": "ota_manager", "type": "backend", "label": "RainMaker OTA Manager", "sublabel": "OTA State Machine & Event Loop", "pos": [540, 360], "size": [170, 60] },
+    { "id": "bootloader", "type": "security", "label": "2nd Stage Bootloader", "sublabel": "Anti-Rollback State Machine", "pos": [540, 480], "size": [170, 60] },
+    { "id": "light_driver", "type": "backend", "label": "WS2812B Light Driver", "sublabel": "Diagnostic Pulse Engine", "pos": [810, 80], "size": [160, 60] },
+    { "id": "ws2812_strip", "type": "external", "label": "Hardware LED Strip", "sublabel": "GPIO 4 SPI2 DMA", "pos": [1080, 80], "size": [160, 60] },
+    { "id": "flash_partitions", "type": "database", "label": "Dual Flash Slots", "sublabel": "ota_0 & ota_1 (1920KB ea)", "pos": [810, 360], "size": [170, 60] },
+    { "id": "otadata_sector", "type": "database", "label": "otadata Partition", "sublabel": "Active Slot State (8KB)", "pos": [810, 480], "size": [170, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "OTA Initiation & Server Plane", "wraps": ["dev_cli", "rmaker_cloud", "ota_server"] },
+    { "kind": "region", "label": "ESP-IDF OTA Streaming & Flash Write", "wraps": ["ota_client", "ota_manager", "flash_partitions"] },
+    { "kind": "region", "label": "Bootloader & Rollback Control", "wraps": ["bootloader", "otadata_sector"] },
+    { "kind": "region", "label": "Post-OTA Health Verification Engine", "wraps": ["diag_engine", "light_driver", "ws2812_strip", "storage_nvs"] }
+  ],
+  "connections": [
+    { "id": "cli-to-server", "from": "dev_cli", "to": "ota_server", "label": "Deploy Binary", "labelAt": [235, 95], "fromSide": "right", "toSide": "left" },
+    { "id": "server-to-client", "from": "ota_server", "to": "ota_client", "label": "HTTP 206 Range", "labelAt": [350, 250], "fromSide": "bottom", "toSide": "top" },
+    { "id": "cloud-to-client", "from": "rmaker_cloud", "to": "ota_client", "label": "MQTT OTA Job", "labelAt": [235, 375], "fromSide": "right", "toSide": "left" },
+    { "id": "client-to-mgr", "from": "ota_client", "to": "ota_manager", "label": "Chunk Stream", "labelAt": [485, 375], "fromSide": "right", "toSide": "left" },
+    { "id": "mgr-to-flash", "from": "ota_manager", "to": "flash_partitions", "label": "Write Slot", "labelAt": [760, 375], "fromSide": "right", "toSide": "left" },
+    { "id": "mgr-to-boot", "from": "ota_manager", "to": "bootloader", "label": "Reboot Trigger", "labelAt": [625, 450], "fromSide": "bottom", "toSide": "top" },
+    { "id": "boot-to-otadata", "from": "bootloader", "to": "otadata_sector", "label": "Slot State", "labelAt": [760, 495], "fromSide": "right", "toSide": "left" },
+    { "id": "otadata-to-flash", "from": "otadata_sector", "to": "flash_partitions", "label": "Boot Slot Select", "labelAt": [895, 440], "fromSide": "top", "toSide": "bottom" },
+    { "id": "diag-to-nvs", "from": "diag_engine", "to": "storage_nvs", "label": "NVS Sanity", "labelAt": [625, 180], "fromSide": "bottom", "toSide": "top" },
+    { "id": "nvs-to-mgr", "from": "storage_nvs", "to": "ota_manager", "label": "Storage Valid", "labelAt": [625, 305], "fromSide": "bottom", "toSide": "top" },
+    { "id": "diag-to-light", "from": "diag_engine", "to": "light_driver", "label": "Diagnostic Pulse", "labelAt": [760, 95], "fromSide": "right", "toSide": "left" },
+    { "id": "light-to-ws2812", "from": "light_driver", "to": "ws2812_strip", "label": "SPI2 DMA Signal", "labelAt": [1025, 95], "fromSide": "right", "toSide": "left" }
+  ]
+}

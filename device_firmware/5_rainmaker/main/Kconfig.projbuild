@@ -1,0 +1,23 @@
+menu "ESP RainMaker OTA Configuration (Chapter 11)"
+
+    choice APP_OTA_MODE
+        prompt "RainMaker OTA Workflow Mode"
+        default APP_OTA_USING_PARAMS
+        help
+            Select the OTA mechanism: URL Parameters (development/local)
+            or MQTT Topics (RainMaker Cloud Dashboard).
+
+        config APP_OTA_USING_PARAMS
+            bool "OTA Using Parameters (URL via CLI/API)"
+            help
+                Enable OTA upgrade triggered by setting the OTA URL parameter.
+                Suitable for local testing, private HTTPS servers, or CLI commands.
+
+        config APP_OTA_USING_TOPICS
+            bool "OTA Using Topics (Dashboard OTA Jobs)"
+            help
+                Enable OTA upgrade coordinated via MQTT topics and RainMaker Dashboard.
+                Suitable for production batch deployments.
+    endchoice
+
+endmenu

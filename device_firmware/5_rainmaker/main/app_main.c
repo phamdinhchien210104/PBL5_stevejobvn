@@ -82,9 +82,47 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
     return ESP_OK;
 }
 
+/* Post-OTA diagnostic callback to verify hardware & services before canceling rollback (Chapter 11) */
+static esp_rmaker_ota_diag_status_t app_ota_diagnostic(esp_rmaker_ota_diag_priv_t *ota_diag_priv, void *priv)
+{
+    ESP_LOGI(TAG, "==========================================================");
+    ESP_LOGI(TAG, "  [OTA Diagnostic] Post-OTA Health Check (State: %d)       ",
+             ota_diag_priv ? ota_diag_priv->state : -1);
+    ESP_LOGI(TAG, "==========================================================");
+
+    if (ota_diag_priv && ota_diag_priv->state == OTA_DIAG_STATE_INIT) {
+        ESP_LOGI(TAG, "Phase 1: Validating WS2812B Light Driver & Storage...");
+        /* 1. Verify light driver state */
+        bool current_state = app_driver_get_state();
+        ESP_LOGI(TAG, "Light driver operational (Current State: %s)", current_state ? "ON" : "OFF");
+
+        /* 2. Visual confirmation: brief diagnostic pulse */
+        app_driver_set_state(true);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        app_driver_set_state(current_state);
+
+        /* 3. Verify NVS storage sanity */
+        esp_err_t nvs_err = app_storage_init();
+        if (nvs_err != ESP_OK) {
+            ESP_LOGE(TAG, "OTA Diagnostics FAILED: NVS storage integrity error!");
+            return OTA_DIAG_STATUS_FAIL;
+        }
+
+        ESP_LOGI(TAG, "Phase 1 Diagnostics PASSED. Waiting for Cloud MQTT connection...");
+        return OTA_DIAG_STATUS_SUCCESS;
+    } else if (ota_diag_priv && ota_diag_priv->state == OTA_DIAG_STATE_POST_MQTT) {
+        ESP_LOGI(TAG, "Phase 2: MQTT Connected to RainMaker Cloud!");
+        ESP_LOGI(TAG, "All OTA Diagnostics PASSED! Firmware verified valid, rollback cancelled.");
+        return OTA_DIAG_STATUS_SUCCESS;
+    }
+
+    return OTA_DIAG_STATUS_SUCCESS;
+}
+
 void app_main(void)
 {
     esp_err_t err = ESP_OK;
+
     ESP_LOGI(TAG, "==========================================================");
     ESP_LOGI(TAG, "  ESP RainMaker Smart Light Firmware (Chapter 9) Initializing ");
     ESP_LOGI(TAG, "==========================================================");
@@ -135,11 +173,19 @@ void app_main(void)
     ESP_LOGI(TAG, "Enabling Offline Scheduling Service...");
     esp_rmaker_schedule_enable();
 
-    ESP_LOGI(TAG, "Enabling OTA Upgrade Service...");
+    ESP_LOGI(TAG, "Enabling OTA Upgrade Service (Chapter 11)...");
     esp_rmaker_ota_config_t ota_config = {
         .server_cert = ota_server_cert,
+        .ota_diag = app_ota_diagnostic,
     };
-    esp_rmaker_ota_enable(&ota_config, OTA_USING_PARAMS);
+#if defined(CONFIG_APP_OTA_USING_TOPICS)
+    ESP_LOGI(TAG, "OTA Mode: OTA_USING_TOPICS (ESP RainMaker Dashboard Job)");
+    ESP_ERROR_CHECK(esp_rmaker_ota_enable(&ota_config, OTA_USING_TOPICS));
+#else
+    ESP_LOGI(TAG, "OTA Mode: OTA_USING_PARAMS (URL Parameter via CLI/API)");
+    ESP_ERROR_CHECK(esp_rmaker_ota_enable(&ota_config, OTA_USING_PARAMS));
+#endif
+
 
     ESP_LOGI(TAG, "Enabling System Service (Reboot & Factory Reset)...");
     esp_rmaker_system_service_enable(NULL);
