@@ -35,6 +35,7 @@
 #include "esp_rmaker_schedule.h"
 #include <esp_rmaker_utils.h>
 #include <esp_rmaker_time_sync.h>
+#include <esp_rmaker_factory.h>
 
 #include "app_wifi.h"
 #include "app_storage.h"
@@ -115,17 +116,53 @@ static esp_rmaker_ota_diag_status_t app_ota_diagnostic(esp_rmaker_ota_diag_priv_
     return OTA_DIAG_STATUS_SUCCESS;
 }
 
+/*
+ * Inspect Factory NVS Partition ('fctry') for mass manufacturing credentials (Chapter 14)
+ */
+static void app_factory_data_inspect(void)
+{
+    ESP_LOGI(TAG, "1.1 Checking Factory Data in 'fctry' Partition (Chapter 14)...");
+    esp_err_t err = esp_rmaker_factory_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Factory NVS partition 'fctry' not initialized or not found (%s)", esp_err_to_name(err));
+        return;
+    }
+
+    char *serial_no = (char *)esp_rmaker_factory_get("serial_no");
+    if (serial_no) {
+        ESP_LOGI(TAG, "==========================================================");
+        ESP_LOGI(TAG, "  [FACTORY CREDENTIAL] Serial Number: %s", serial_no);
+        free(serial_no);
+    } else {
+        ESP_LOGI(TAG, "  [FACTORY INFO] No 'serial_no' in fctry (Unprovisioned device)");
+    }
+
+    size_t mac_size = esp_rmaker_factory_get_size("mac_addr");
+    if (mac_size == 6) {
+        uint8_t *mac = (uint8_t *)esp_rmaker_factory_get("mac_addr");
+        if (mac) {
+            ESP_LOGI(TAG, "  [FACTORY CREDENTIAL] Factory MAC:   %02X:%02X:%02X:%02X:%02X:%02X",
+                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+            free(mac);
+        }
+    }
+    ESP_LOGI(TAG, "==========================================================");
+}
+
 void app_main(void)
 {
     esp_err_t err = ESP_OK;
 
     ESP_LOGI(TAG, "==========================================================");
-    ESP_LOGI(TAG, "  Smart Light Firmware Chapter 12: Power Management       ");
+    ESP_LOGI(TAG, "  Smart Light Firmware: Security & Mass Mfg Ready         ");
     ESP_LOGI(TAG, "==========================================================");
 
     /* 1. NVS Flash initialization */
     ESP_LOGI(TAG, "1. NVS Flash initialization...");
     app_storage_init();
+
+    /* 1.1. Factory Data inspection (Chapter 14) */
+    app_factory_data_inspect();
 
     /* 2. Power Management initialization (DFS 40-160 MHz + Light-sleep + PM Lock) */
     ESP_LOGI(TAG, "2. Power Management initialization...");

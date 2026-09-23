@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ADR-009: Hardware Security Hardening & Automated Mass Production Pipeline",
+    "output": "ADR-009-security-and-mass-manufacturing.html",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "viewBox": [1320, 560],
+    "views": [
+      {
+        "id": "mass-mfg-pipeline",
+        "label": "Mass Manufacturing Data Pipeline (Chapter 14)",
+        "focus": ["cert_generator", "nvs_schema", "mass_mfg_tool", "fctry_binaries", "factory_flasher", "fctry_partition", "fw_runtime"],
+        "note": "Per-device credentials (X.509 certs, private keys, MACs) are packaged into 24KB NVS factory partition binaries and flashed at 0x3E0000."
+      },
+      {
+        "id": "secure-boot-root-of-trust",
+        "label": "Secure Boot v2 Cryptographic Chain (Chapter 13)",
+        "focus": ["rsa_key_gen", "digest_extractor", "hardware_efuse", "bootloader_guard", "fw_runtime"],
+        "note": "RSA-3072 private key signs firmware binaries; public key SHA-256 digest is burned into eFuse BLOCK_KEY0 for ROM bootloader verification."
+      },
+      {
+        "id": "flash-encryption-hardware",
+        "label": "Hardware AES-XTS Flash Encryption (Chapter 13)",
+        "focus": ["fe_key_gen", "efuse_auditor", "hardware_efuse", "bootloader_guard", "fctry_partition"],
+        "note": "256-bit AES key in eFuse enables hardware SPI bus encryption, protecting firmware and credentials against physical extraction."
+      },
+      {
+        "id": "firmware-runtime-readout",
+        "label": "Assembly Line Flashing & Runtime Readout",
+        "focus": ["fctry_binaries", "factory_flasher", "fctry_partition", "bootloader_guard", "fw_runtime"],
+        "note": "Production flasher writes factory binary to dynamic offset; firmware mounts fctry partition on boot and displays device serial number."
+      }
+    ]
+  },
+  "components": [
+    { "id": "cert_generator", "type": "frontend", "label": "Device Credentials", "sublabel": "Keys & X.509 Certs", "pos": [40, 70], "size": [160, 56] },
+    { "id": "nvs_schema", "type": "database", "label": "NVS Schema Config", "sublabel": "nvs_schema.csv", "pos": [310, 70], "size": [160, 56] },
+    { "id": "mass_mfg_tool", "type": "backend", "label": "NVS Mfg Generator", "sublabel": "mfg_gen.py v6.0.2", "pos": [580, 70], "size": [165, 56] },
+    { "id": "factory_flasher", "type": "backend", "label": "Factory Flasher Tool", "sublabel": "Auto-Offset esptool", "pos": [850, 70], "size": [165, 56] },
+    { "id": "fctry_partition", "type": "external", "label": "Flash fctry Partition", "sublabel": "Offset 0x3E0000", "pos": [1120, 70], "size": [160, 56] },
+
+    { "id": "rsa_key_gen", "type": "security", "label": "RSA-3072 Key Gen", "sublabel": "Private Signing Key", "pos": [40, 230], "size": [160, 56] },
+    { "id": "digest_extractor", "type": "security", "label": "SBv2 Public Digest", "sublabel": "32B SHA-256 Digest", "pos": [310, 230], "size": [160, 56] },
+    { "id": "fctry_binaries", "type": "database", "label": "Factory Binaries", "sublabel": "24KB fctry Images", "pos": [580, 230], "size": [165, 56] },
+    { "id": "bootloader_guard", "type": "security", "label": "ROM Bootloader Guard", "sublabel": "RSA & AES Decrypt", "pos": [850, 230], "size": [165, 56] },
+    { "id": "fw_runtime", "type": "frontend", "label": "Smart Light Firmware", "sublabel": "esp_rmaker_factory", "pos": [1120, 230], "size": [160, 56] },
+
+    { "id": "fe_key_gen", "type": "security", "label": "AES-256 Key Gen", "sublabel": "Flash Encryption", "pos": [40, 390], "size": [160, 56] },
+    { "id": "efuse_auditor", "type": "backend", "label": "Virtual eFuse Auditor", "sublabel": "Safe --virt Dry-Run", "pos": [310, 390], "size": [160, 56] },
+    { "id": "hardware_efuse", "type": "security", "label": "Hardware eFuse Array", "sublabel": "BLOCK_KEY0 & KEY1", "pos": [580, 390], "size": [165, 56] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Device Identity & Manufacturing Pipeline", "wraps": ["cert_generator", "nvs_schema", "mass_mfg_tool", "factory_flasher", "fctry_partition"] },
+    { "kind": "region", "label": "Security Root of Trust & Bootloader Execution", "wraps": ["rsa_key_gen", "digest_extractor", "fctry_binaries", "bootloader_guard", "fw_runtime"] },
+    { "kind": "region", "label": "Hardware Cryptographic Key Storage & eFuse", "wraps": ["fe_key_gen", "efuse_auditor", "hardware_efuse"] }
+  ],
+  "connections": [
+    { "id": "certs-to-schema", "from": "cert_generator", "to": "nvs_schema", "label": "Device Credentials" },
+    { "id": "schema-to-tool", "from": "nvs_schema", "to": "mass_mfg_tool", "label": "Layout Schema" },
+    { "id": "tool-to-bins", "from": "mass_mfg_tool", "to": "fctry_binaries", "label": "Synthesize 24KB", "fromSide": "bottom", "toSide": "top", "labelAt": [663, 160] },
+    { "id": "bins-to-flasher", "from": "fctry_binaries", "to": "factory_flasher", "label": "Select Device" },
+    { "id": "flasher-to-part", "from": "factory_flasher", "to": "fctry_partition", "label": "Write 0x3E0000" },
+    { "id": "part-to-runtime", "from": "fctry_partition", "to": "fw_runtime", "label": "Factory Readout", "fromSide": "bottom", "toSide": "top", "labelAt": [1200, 160] },
+
+    { "id": "rsa-to-digest", "from": "rsa_key_gen", "to": "digest_extractor", "label": "Extract Digest" },
+    { "id": "digest-to-efuse", "from": "digest_extractor", "to": "hardware_efuse", "label": "Burn Digest", "fromSide": "right", "toSide": "top" },
+    { "id": "fe-to-auditor", "from": "fe_key_gen", "to": "efuse_auditor", "label": "Key Parameter" },
+    { "id": "auditor-to-efuse", "from": "efuse_auditor", "to": "hardware_efuse", "label": "Audit Fuses" },
+    { "id": "efuse-to-guard", "from": "hardware_efuse", "to": "bootloader_guard", "label": "Root of Trust" },
+    { "id": "guard-to-runtime", "from": "bootloader_guard", "to": "fw_runtime", "label": "Auth & Decrypt" }
+  ]
+}

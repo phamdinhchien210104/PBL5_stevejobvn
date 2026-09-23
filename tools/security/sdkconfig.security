@@ -1,0 +1,19 @@
+# ESP32 Hardware Security Baseline Configuration (Chapter 13)
+# To apply: idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;../../tools/security/sdkconfig.security" reconfigure build
+
+# 1. Hardware Flash Encryption (AES-XTS on external SPI Flash)
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT=y
+
+# 2. Hardware Secure Boot v2 (RSA-3072 signature verification in bootloader)
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="tools/security/keys/secure_boot_signing_key.pem"
+
+# 3. NVS Encryption Support
+CONFIG_NVS_ENCRYPTION=y
+
+# 4. Anti-Rollback & Bootloader Verification
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y

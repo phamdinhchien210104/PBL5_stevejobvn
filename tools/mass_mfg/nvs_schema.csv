@@ -1,0 +1,5 @@
+rmaker_factory,namespace,
+serial_no,data,string
+mac_addr,data,hex2bin
+priv_key,file,binary
+node_cert,file,binary

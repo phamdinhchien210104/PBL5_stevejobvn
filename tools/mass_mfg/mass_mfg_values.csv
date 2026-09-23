@@ -1,0 +1,6 @@
+serial_no,mac_addr,priv_key,node_cert
+LIGHT_2026_0001,84f703000001,keys/device_01.key,certs/device_01.crt
+LIGHT_2026_0002,84f703000002,keys/device_02.key,certs/device_02.crt
+LIGHT_2026_0003,84f703000003,keys/device_03.key,certs/device_03.crt
+LIGHT_2026_0004,84f703000004,keys/device_04.key,certs/device_04.crt
+LIGHT_2026_0005,84f703000005,keys/device_05.key,certs/device_05.crt

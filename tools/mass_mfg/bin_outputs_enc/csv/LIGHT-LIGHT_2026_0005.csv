@@ -1,0 +1,6 @@
+key,type,encoding,value
+rmaker_factory,namespace,,
+serial_no,data,string,LIGHT_2026_0005
+mac_addr,data,hex2bin,84f703000005
+priv_key,file,binary,keys/device_05.key
+node_cert,file,binary,certs/device_05.crt
