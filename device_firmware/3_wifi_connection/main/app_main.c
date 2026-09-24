@@ -120,9 +120,26 @@ static void event_handler(void *arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
         esp_ip4addr_ntoa(&event->ip_info.ip, s_ip_str, sizeof(s_ip_str));
+
+        wifi_ap_record_t ap_info = {0};
+        char bssid_str[24] = "N/A";
+        char ssid_str[33] = CONFIG_ESP_WIFI_SSID;
+        int channel = 0;
+        int rssi = 0;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            snprintf(ssid_str, sizeof(ssid_str), "%s", (char *)ap_info.ssid);
+            snprintf(bssid_str, sizeof(bssid_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                     ap_info.bssid[0], ap_info.bssid[1], ap_info.bssid[2],
+                     ap_info.bssid[3], ap_info.bssid[4], ap_info.bssid[5]);
+            channel = ap_info.primary;
+            rssi = ap_info.rssi;
+        }
+
         ESP_LOGI(TAG, "==========================================================");
         ESP_LOGI(TAG, "  ĐÃ KẾT NỐI WI-FI THÀNH CÔNG!                           ");
-        ESP_LOGI(TAG, "  Địa chỉ IP được cấp: %s", s_ip_str);
+        ESP_LOGI(TAG, "  - Tên Wi-Fi (SSID) : %s", ssid_str);
+        ESP_LOGI(TAG, "  - BSSID (MAC AP)   : %s (Kênh %d, Sóng %d dBm)", bssid_str, channel, rssi);
+        ESP_LOGI(TAG, "  - Địa chỉ IP cấp   : %s", s_ip_str);
         ESP_LOGI(TAG, "==========================================================");
         s_retry_num = 0;
         s_is_connected = true;
@@ -313,6 +330,11 @@ static void wifi_station_initialize(void)
 void app_main(void)
 {
     int i = 0;
+    /* Tối ưu hóa mức độ log (Observability & Signal-to-Noise Ratio):
+     * Ẩn các log debug/thủ tục nội bộ từ Wi-Fi PHY và API driver để làm sạch màn hình terminal */
+    esp_log_level_set("wifi", ESP_LOG_WARN);
+    esp_log_level_set("light_driver", ESP_LOG_WARN);
+
     ESP_LOGI(TAG, "==========================================================");
     ESP_LOGI(TAG, "  PBL5 Smart Light - Chapter 3: Wi-Fi Station Connection  ");
     ESP_LOGI(TAG, "==========================================================");
@@ -335,12 +357,11 @@ void app_main(void)
 
     while (1) {
         if (s_is_connected) {
-            ESP_LOGI(TAG, "[%02d] Smart Light running | Wi-Fi: ĐÃ KẾT NỐI (SSID: %s, IP: %s) | Đèn: XANH LÁ",
-                     i++, CONFIG_ESP_WIFI_SSID, s_ip_str);
+            ESP_LOGI(TAG, "[Heartbeat #%02d] ONLINE | SSID: %s | IP: %s | Free Heap: %lu bytes",
+                     ++i, CONFIG_ESP_WIFI_SSID, s_ip_str, (unsigned long)esp_get_free_heap_size());
         } else {
-            ESP_LOGW(TAG, "[%02d] Smart Light running | Wi-Fi: THẤT BẠI / MẤT KẾT NỐI (SSID: %s) | Đèn: ĐỎ CẢNH BÁO",
-                     i++, CONFIG_ESP_WIFI_SSID);
+            ESP_LOGW(TAG, "[Heartbeat #%02d] MẤT KẾT NỐI (Đang thử kết nối lại %s...)", ++i, CONFIG_ESP_WIFI_SSID);
         }
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(30000));
     }
 }
