@@ -93,6 +93,25 @@ static int s_retry_num = 0;
 static bool s_is_connected = false;
 static char s_ip_str[16] = "0.0.0.0";
 
+static const char *wifi_reason_to_str(uint8_t reason)
+{
+    switch (reason) {
+        case WIFI_REASON_UNSPECIFIED:              return "Unspecified (1)";
+        case WIFI_REASON_AUTH_EXPIRE:              return "Auth Expired (2) - Router hết hạn/từ chối xác thực (Band Steering/Nguồn yếu)";
+        case WIFI_REASON_AUTH_LEAVE:               return "Auth Leave (3)";
+        case WIFI_REASON_ASSOC_TOOMANY:            return "Too many stations (5) - AP quá tải";
+        case WIFI_REASON_ASSOC_NOT_AUTHED:         return "Assoc not authed (9)";
+        case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:   return "4-way Handshake Timeout (15) - Sai mật khẩu";
+        case WIFI_REASON_BEACON_TIMEOUT:           return "Beacon Timeout (200) - Mất tín hiệu Beacon AP";
+        case WIFI_REASON_NO_AP_FOUND:              return "AP Not Found (201) - Không tìm thấy SSID";
+        case WIFI_REASON_AUTH_FAIL:                return "Auth Failed (202) - Sai mật khẩu hoặc chế độ bảo mật";
+        case WIFI_REASON_ASSOC_FAIL:               return "Association Failed (203) - Kết hợp AP thất bại (Band Steering)";
+        case WIFI_REASON_HANDSHAKE_TIMEOUT:        return "Handshake Timeout (204) - Sai mật khẩu";
+        case WIFI_REASON_CONNECTION_FAIL:          return "Connection Failed (205) - Lỗi kết nối AP";
+        default:                                   return "Other / Unknown Reason";
+    }
+}
+
 /**
  * @brief Lấy tên dịch vụ thiết bị BLE (dạng PROV_XXXXXX theo 3 byte cuối MAC)
  */
@@ -153,8 +172,23 @@ static void event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "==========================================================");
             ESP_LOGI(TAG, "==> [PROV] ĐÃ NHẬN THÔNG TIN WI-FI TỪ ĐIỆN THOẠI!");
             ESP_LOGI(TAG, "    Tên Wi-Fi (SSID) : %s", (char *)wifi_sta_cfg->ssid);
-            ESP_LOGI(TAG, "    Đang tiến hành kết nối tới Access Point...");
+            ESP_LOGI(TAG, "    Đang cấu hình tối ưu 2.4GHz & kết nối Access Point...");
             ESP_LOGI(TAG, "==========================================================");
+
+            /* Tinh chỉnh cấu hình Wi-Fi Station nhận được từ app điện thoại để tương thích router 2 băng tần */
+            wifi_sta_cfg->scan_method = WIFI_ALL_CHANNEL_SCAN;
+            wifi_sta_cfg->sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+            wifi_sta_cfg->threshold.authmode = WIFI_AUTH_WPA2_PSK;
+            wifi_sta_cfg->threshold.rssi = -127;
+            wifi_sta_cfg->pmf_cfg.capable = false;
+            wifi_sta_cfg->pmf_cfg.required = false;
+            wifi_sta_cfg->disable_wpa3_compatible_mode = 1;
+            wifi_sta_cfg->failure_retry_cnt = 3;
+
+            /* Tắt Power Save & giảm TX Power để ổn định nguồn 3.3V cho ESP32-C3 SuperMini */
+            esp_wifi_set_ps(WIFI_PS_NONE);
+            esp_wifi_set_max_tx_power(48); // 12 dBm
+
             app_driver_set_prov_status(PROV_STATUS_CONNECTING);
             break;
         }
@@ -164,7 +198,7 @@ static void event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGE(TAG, "==========================================================");
             ESP_LOGE(TAG, "==> [PROV] KẾT NỐI WI-FI THẤT BẠI!");
             if (*reason == WIFI_PROV_STA_AUTH_ERROR) {
-                ESP_LOGE(TAG, "    Lý do: SAI MẬT KHẨU WI-FI!");
+                ESP_LOGE(TAG, "    Lý do: SAI MẬT KHẨU WI-FI HOẶC LỖI XÁC THỰC ROUTER!");
                 ESP_LOGW(TAG, "    Vui lòng kiểm tra và nhập lại đúng mật khẩu trên app điện thoại.");
             } else {
                 ESP_LOGE(TAG, "    Lý do: KHÔNG TÌM THẤY ROUTER / AP!");
@@ -218,15 +252,21 @@ static void event_handler(void *arg, esp_event_base_t event_base,
         }
     } else if (event_base == WIFI_EVENT) {
         if (event_id == WIFI_EVENT_STA_START) {
+            esp_wifi_set_ps(WIFI_PS_NONE);
+            esp_wifi_set_max_tx_power(48); // 12 dBm
             esp_wifi_connect();
         } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            wifi_event_sta_disconnected_t *disconn = (wifi_event_sta_disconnected_t *)event_data;
             s_is_connected = false;
-            if (s_retry_num < 5) {
-                esp_wifi_connect();
+            ESP_LOGW(TAG, "==> [Wi-Fi Disconnected] Mã lý do: %d - %s",
+                     disconn->reason, wifi_reason_to_str(disconn->reason));
+            if (s_retry_num < 10) {
                 s_retry_num++;
-                ESP_LOGW(TAG, "Mất kết nối Wi-Fi. Đang thử kết nối lại (lần %d/5)...", s_retry_num);
+                ESP_LOGW(TAG, "Mất kết nối Wi-Fi. Nghỉ 1.5s và thử kết nối lại (lần %d/10)...", s_retry_num);
+                vTaskDelay(pdMS_TO_TICKS(1500));
+                esp_wifi_connect();
             } else {
-                ESP_LOGE(TAG, "Không thể kết nối lại Wi-Fi sau 5 lần thử!");
+                ESP_LOGE(TAG, "Không thể kết nối lại Wi-Fi sau 10 lần thử!");
                 xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
             }
         }
@@ -259,9 +299,16 @@ static void wifi_initialize(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+    /* 1. Country code configuration for Vietnam: channels 1 to 13 */
+    wifi_country_t country = {
+        .cc = "VN",
+        .schan = 1,
+        .nchan = 13,
+        .policy = WIFI_COUNTRY_POLICY_AUTO,
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_country(&country));
+
     /* Đăng ký các event handler cho Provisioning, BLE transport, Security và IP */
-    /* LƯU Ý KỸ THUẬT: KHÔNG đăng ký WIFI_EVENT ở đây vì network_provisioning
-     * tự quản lý WIFI_EVENT trong suốt quá trình cấp phát để tránh xung đột state machine */
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(PROTOCOMM_TRANSPORT_BLE_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(PROTOCOMM_SECURITY_SESSION_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
@@ -275,9 +322,30 @@ static void wifi_station_initialize(void)
 
     /* Start Wi-Fi in station mode */
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+
+    /* Tinh chỉnh cấu hình lưu trong Flash NVS sang WPA2/HT20/PMF-off/All-Channel-Scan */
+    wifi_config_t sta_cfg;
+    if (esp_wifi_get_config(WIFI_IF_STA, &sta_cfg) == ESP_OK) {
+        sta_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+        sta_cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+        sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        sta_cfg.sta.threshold.rssi = -127;
+        sta_cfg.sta.pmf_cfg.capable = false;
+        sta_cfg.sta.pmf_cfg.required = false;
+        sta_cfg.sta.disable_wpa3_compatible_mode = 1;
+        sta_cfg.sta.failure_retry_cnt = 3;
+        esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
+        ESP_LOGI(TAG, "wifi_station_initialize: Đã cập nhật cấu hình NVS sang tối ưu 2.4GHz (SSID: %s)", sta_cfg.sta.ssid);
+    }
+
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "wifi_station_initialize: Đang kết nối Router Wi-Fi...");
+    /* Tắt Power Save & giảm TX Power sau khi khởi động Wi-Fi */
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(48)); // 12 dBm
+
+    ESP_LOGI(TAG, "wifi_station_initialize: Đang kết nối Router Wi-Fi (C3 SuperMini 2.4GHz Tuned)...");
+    esp_wifi_connect();
 
     /* Waiting until either connection is established (WIFI_CONNECTED_BIT) or failed (WIFI_FAIL_BIT) */
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
@@ -297,10 +365,10 @@ static void wifi_station_initialize(void)
 
 static void wifi_prov_mgr_initialize(void)
 {
-    /* Cấu hình Provisioning Manager với scheme BLE và thử lại tối đa 5 lần */
+    /* Cấu hình Provisioning Manager với scheme BLE và thử lại tối đa 10 lần */
     wifi_prov_mgr_config_t config = {
         .network_prov_wifi_conn_cfg = {
-            .wifi_conn_attempts = 5,
+            .wifi_conn_attempts = 10,
         },
         .scheme = wifi_prov_scheme_ble,
         .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BLE

@@ -47,9 +47,9 @@ void app_main(void)
     ESP_LOGI(TAG, " - Chế độ sáng  : %d", light_driver_get_mode());
     ESP_LOGI(TAG, "----------------------------------------------------------");
     ESP_LOGI(TAG, "Hướng dẫn kiểm tra phần cứng:");
-    ESP_LOGI(TAG, " 1. Nhấn nút Boot (GPIO9): Nhả nút (BUTTON_PRESS_UP) sẽ đảo trạng thái Bật/Tắt.");
-    ESP_LOGI(TAG, " 2. Nhấn đúp nút Boot: Đổi màu sắc (RGB) và lưu vào Flash.");
-    ESP_LOGI(TAG, " 3. Nhấn giữ nút Boot: Kích hoạt/dừng hiệu ứng thở (Breathing).");
+    ESP_LOGI(TAG, " 1. Nhấn nút Boot (GPIO9): Nhấn 1 lần để Bật/Tắt đèn (Chốt trạng thái).");
+    ESP_LOGI(TAG, " 2. Nhấn đúp nút Boot: Đổi màu sắc (8 màu RGB) và lưu vào Flash.");
+    ESP_LOGI(TAG, " 3. Nhấn giữ nút Boot: Dimming vô cấp đảo chiều (Tự dừng tại 100%% hoặc 5%%, nhả tay chốt độ sáng).");
     ESP_LOGI(TAG, " 4. Rút nguồn và cắm lại: Kiểm tra đèn khôi phục đúng trạng thái trước khi tắt.");
     ESP_LOGI(TAG, "==========================================================");
 
