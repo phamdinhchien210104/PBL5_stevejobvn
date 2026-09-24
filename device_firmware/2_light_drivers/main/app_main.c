@@ -14,6 +14,7 @@
 
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_system.h"
 
 #include "app_storage.h"
 #include "light_driver.h"
@@ -23,6 +24,10 @@ static const char *TAG = "app_main";
 
 void app_main(void)
 {
+    /* Tối ưu hóa mức độ log (Observability & Signal-to-Noise Ratio):
+     * Ẩn các log debug API chi tiết của driver để làm nổi bật các sự kiện nhấn nút và trạng thái đèn */
+    esp_log_level_set("light_driver", ESP_LOG_WARN);
+
     ESP_LOGI(TAG, "==========================================================");
     ESP_LOGI(TAG, "  PBL5 Smart Light: Section 6.5 Adding Drivers Practice   ");
     ESP_LOGI(TAG, "==========================================================");
@@ -55,11 +60,11 @@ void app_main(void)
 
     int loop_cnt = 0;
     while (1) {
-        ESP_LOGI(TAG, "[Giám sát #%02d] Trạng thái: %s | Độ sáng: %d%% | Mode: %s",
-                 loop_cnt++,
+        ESP_LOGI(TAG, "[Giám sát #%02d] Trạng thái: %s | Độ sáng: %d%% | Free Heap: %lu bytes",
+                 ++loop_cnt,
                  light_driver_get_switch() ? "BẬT (ON)" : "TẮT (OFF)",
                  light_driver_get_brightness(),
-                 app_driver_get_mode() == LIGHT_MODE_DIMMING ? "DIMMING (Breathing)" : "NORMAL");
-        vTaskDelay(pdMS_TO_TICKS(10000));
+                 (unsigned long)esp_get_free_heap_size());
+        vTaskDelay(pdMS_TO_TICKS(30000));
     }
 }
