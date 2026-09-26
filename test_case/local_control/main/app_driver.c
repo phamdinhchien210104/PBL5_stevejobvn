@@ -60,6 +60,32 @@ static const uint8_t s_colors[][3] = {
 };
 #define NUM_COLORS (sizeof(s_colors) / sizeof(s_colors[0]))
 
+static const char *s_color_names[] = {
+    "Đỏ (Red)",
+    "Xanh lá (Green)",
+    "Xanh dương (Blue)",
+    "Vàng (Yellow)",
+    "Tím hồng (Magenta)",
+    "Xanh lơ (Cyan)",
+    "Cam (Orange)",
+    "Trắng ấm (Warm White)",
+};
+
+int app_driver_next_color(void)
+{
+    if (!g_output_state) {
+        g_output_state = true;
+        light_driver_set_switch(true);
+    }
+    s_color_index = (s_color_index + 1) % NUM_COLORS;
+    uint8_t r = s_colors[s_color_index][0];
+    uint8_t g = s_colors[s_color_index][1];
+    uint8_t b = s_colors[s_color_index][2];
+    ESP_LOGI(TAG, "==> [Next Color] Đổi màu [%d/%d] (%s) -> R=%d, G=%d, B=%d",
+             s_color_index + 1, (int)NUM_COLORS, s_color_names[s_color_index], r, g, b);
+    return light_driver_set_rgb(r, g, b);
+}
+
 /**
  * @brief Callback khi nhấn 1 lần (Single click): Bật / Tắt đèn chốt trạng thái
  */
@@ -77,17 +103,8 @@ static void single_click_cb(void *arg)
  */
 static void double_click_cb(void *arg)
 {
-    if (!g_output_state) {
-        g_output_state = true;
-        light_driver_set_switch(true);
-    }
-    s_color_index = (s_color_index + 1) % NUM_COLORS;
-    uint8_t r = s_colors[s_color_index][0];
-    uint8_t g = s_colors[s_color_index][1];
-    uint8_t b = s_colors[s_color_index][2];
-    ESP_LOGI(TAG, "==> [Double Click] Đổi màu [%d/%d] -> R=%d, G=%d, B=%d",
-             s_color_index + 1, (int)NUM_COLORS, r, g, b);
-    light_driver_set_rgb(r, g, b);
+    ESP_LOGI(TAG, "==> [Double Click Nút Boot] Chuyển màu kế tiếp...");
+    app_driver_next_color();
 }
 
 /**
@@ -197,6 +214,69 @@ int app_driver_set_color(uint8_t red, uint8_t green, uint8_t blue)
     }
     ESP_LOGI(TAG, "==> [Driver] Đặt màu RGB: R=%d, G=%d, B=%d", red, green, blue);
     return light_driver_set_rgb(red, green, blue);
+}
+
+uint8_t app_driver_get_brightness(void)
+{
+    return s_current_brightness;
+}
+
+int app_driver_set_brightness(uint8_t brightness)
+{
+    if (brightness < DIM_MIN_PERCENT) {
+        brightness = DIM_MIN_PERCENT;
+    } else if (brightness > DIM_MAX_PERCENT) {
+        brightness = DIM_MAX_PERCENT;
+    }
+
+    if (!g_output_state) {
+        g_output_state = true;
+        light_driver_set_switch(true);
+    }
+
+    s_current_brightness = brightness;
+    ESP_LOGI(TAG, "==> [Driver] Cài đặt độ sáng: %d%%", s_current_brightness);
+    return light_driver_set_brightness(s_current_brightness);
+}
+
+int app_driver_adjust_brightness(int delta)
+{
+    if (!g_output_state) {
+        g_output_state = true;
+        light_driver_set_switch(true);
+    }
+
+    int target = (int)s_current_brightness + delta;
+    if (target < DIM_MIN_PERCENT) {
+        target = DIM_MIN_PERCENT;
+    } else if (target > DIM_MAX_PERCENT) {
+        target = DIM_MAX_PERCENT;
+    }
+
+    s_current_brightness = (uint8_t)target;
+    ESP_LOGI(TAG, "==> [Driver] Điều chỉnh độ sáng: %d%% (delta: %+d%%)", s_current_brightness, delta);
+    return light_driver_set_brightness(s_current_brightness);
+}
+
+uint8_t app_driver_get_color_index(void)
+{
+    return s_color_index;
+}
+
+const char* app_driver_get_color_name(void)
+{
+    if (s_color_index >= NUM_COLORS) {
+        return "Unknown";
+    }
+    return s_color_names[s_color_index];
+}
+
+void app_driver_get_rgb(uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    uint8_t idx = s_color_index % NUM_COLORS;
+    if (r) *r = s_colors[idx][0];
+    if (g) *g = s_colors[idx][1];
+    if (b) *b = s_colors[idx][2];
 }
 
 void app_driver_set_wifi_status(wifi_status_t status)

@@ -26,7 +26,7 @@ menu "Local Control Configuration"
 
     config LOCAL_CTRL_BLE_ENABLE
         bool "Enable Fallback Bluetooth LE Local Control (GATT Server)"
-        default y
+        default n
         help
             Enables standalone Bluetooth LE GATT Server for offline local control
             when Wi-Fi router is offline or unreachable (Section 8.5.3).

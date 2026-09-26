@@ -249,8 +249,190 @@ def auto_discover_esp32(target_mdns: str = "my_esp_ctrl_device.local", port: int
     return None
 
 # =========================================================================
-# 4. INTERACTIVE CLI MODE (MATCHING THE TEXTBOOK & ESP-IDF ESP_LOCAL_CTRL)
+# 4. INTERACTIVE CLI MODE (STATUS DASHBOARD & KEYBOARD CONTROLS)
 # =========================================================================
+
+def print_status_dashboard(props):
+    """Hiển thị bảng trạng thái trực quan gồm Bật/Tắt, Độ sáng, Màu sắc RGB."""
+    val_str = ""
+    for _, val in props:
+        val_str = val.decode("utf-8", errors="ignore")
+
+    # Phân tích cú pháp JSON trạng thái
+    try:
+        data = json.loads(val_str)
+    except Exception:
+        data = {}
+
+    is_on = data.get("status", False)
+    brightness = data.get("brightness", 100)
+    color_name = data.get("color", "N/A")
+    color_idx = data.get("color_idx", 1)
+    rgb = data.get("rgb", [255, 255, 255])
+    if not isinstance(rgb, list) or len(rgb) < 3:
+        rgb = [255, 255, 255]
+
+    # Thanh tiến trình độ sáng trực quan (10 khối)
+    num_bars = max(0, min(10, int(round(brightness / 10.0))))
+    bar_str = "█" * num_bars + "░" * (10 - num_bars)
+
+    status_str = "🟢 BẬT (ON)" if is_on else "⚪ TẮT (OFF)"
+
+    print("\n" + "=" * 68)
+    print("      ESP32 SMART LIGHT - BẢNG ĐIỀU KHIỂN CỤC BỘ (LOCAL CONTROL)")
+    print("=" * 68)
+    print(f"  [Trạng thái] : {status_str}")
+    print(f"  [Độ sáng]    : {brightness:>3}%  [{bar_str}]")
+    print(f"  [Màu sắc]    : [{color_idx}/8] {color_name} | RGB({rgb[0]}, {rgb[1]}, {rgb[2]})")
+    print("-" * 68)
+    print(f"  [JSON Server]: {val_str}")
+    print("-" * 68)
+    print("  PHÍM THAO TÁC:")
+    print("   [1]  : BẬT đèn                     [0]  : TẮT đèn")
+    print("   [↑]  : Tăng độ sáng (+20%)         [↓]  : Giảm độ sáng (-20%)")
+    print("   [11] hoặc [c] : Đổi màu sắc (8 RGB) [r]  : Đọc lại trạng thái")
+    print("   [q]  : Thoát chương trình")
+    print("=" * 68)
+
+def flush_keyboard_buffer():
+    """Xóa sạch bộ đệm phím tồn đọng để ngăn hiện tượng spam phím khi bấm giữ."""
+    try:
+        import msvcrt
+        while msvcrt.kbhit():
+            msvcrt.getwch()
+    except Exception:
+        pass
+
+def read_control_command():
+    """
+    Đọc lệnh điều khiển từ người dùng (chống spam phím tuyệt đối):
+    - Nhấn phím mũi tên [↑] / [↓] một lần -> Tăng / Giảm 20% rồi dừng chờ lệnh tiếp theo
+    - Phím [0] (Tắt đèn)
+    - Phím [1] (Bật đèn) hoặc [11] / [c] (Đổi màu sắc)
+    - Phím [+] / [-] (Tăng / Giảm 20%)
+    - Phím [r] (Làm mới) / [q] (Thoát)
+    """
+    # 1. Xóa sạch mọi phím còn sót lại trong bộ đệm trước khi hiển thị lời nhắc
+    flush_keyboard_buffer()
+
+    prompt = "\nChọn hành động ([1]/[0]/[↑]/[↓]/[11]/[c]/[r]/[q]) > "
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+
+    try:
+        import msvcrt
+        # Chờ chặn (blocking wait) cho đến khi người dùng nhấn 1 phím thực sự
+        ch = msvcrt.getwch()
+
+        # Xử lý phím điều hướng mở rộng Windows (\x00 hoặc \xe0)
+        if ch in ('\x00', '\xe0'):
+            ch2 = msvcrt.getwch()
+            # Xóa ngay các sự kiện lặp lại (typematic repeat) nếu người dùng lỡ giữ phím
+            time.sleep(0.12)
+            flush_keyboard_buffer()
+
+            if ch2 == 'H':  # Up Arrow
+                print("[↑] TĂNG ĐỘ SÁNG (+20%)")
+                return "up"
+            elif ch2 == 'P':  # Down Arrow
+                print("[↓] GIẢM ĐỘ SÁNG (-20%)")
+                return "down"
+            else:
+                return "r"
+
+        # Xử lý chuỗi ANSI Escape nếu chạy trong VSCode Terminal / Windows Terminal (\x1b[A hoặc \x1b[B)
+        if ch == '\x1b':
+            time.sleep(0.04)
+            if msvcrt.kbhit() and msvcrt.getwch() == '[':
+                if msvcrt.kbhit():
+                    ch3 = msvcrt.getwch()
+                    time.sleep(0.12)
+                    flush_keyboard_buffer()
+                    if ch3 == 'A':
+                        print("[↑] TĂNG ĐỘ SÁNG (+20%)")
+                        return "up"
+                    elif ch3 == 'B':
+                        print("[↓] GIẢM ĐỘ SÁNG (-20%)")
+                        return "down"
+            flush_keyboard_buffer()
+            return "r"
+
+        # Phím chức năng đơn
+        if ch in ('\r', '\n'):
+            print("")
+            return "r"
+        elif ch in ('q', 'Q'):
+            print("q")
+            return "q"
+        elif ch in ('r', 'R'):
+            print("r")
+            return "r"
+        elif ch == '+':
+            print("[+] TĂNG ĐỘ SÁNG (+20%)")
+            time.sleep(0.12)
+            flush_keyboard_buffer()
+            return "up"
+        elif ch == '-':
+            print("[-] GIẢM ĐỘ SÁNG (-20%)")
+            time.sleep(0.12)
+            flush_keyboard_buffer()
+            return "down"
+        elif ch in ('c', 'C'):
+            print("11 (ĐỔI MÀU SẮC)")
+            time.sleep(0.08)
+            flush_keyboard_buffer()
+            return "11"
+        elif ch == '0':
+            print("0 (TẮT ĐÈN)")
+            time.sleep(0.08)
+            flush_keyboard_buffer()
+            return "0"
+        elif ch == '1':
+            sys.stdout.write("1")
+            sys.stdout.flush()
+            # Chờ tối đa 600ms xem người dùng có gõ thêm số 1 nữa (thành '11') không
+            start_t = time.time()
+            is_double = False
+            while time.time() - start_t < 0.60:
+                if msvcrt.kbhit():
+                    ch_next = msvcrt.getwch()
+                    if ch_next == '1':
+                        sys.stdout.write("1 (ĐỔI MÀU SẮC)\n")
+                        sys.stdout.flush()
+                        is_double = True
+                        break
+                    elif ch_next in ('\r', '\n'):
+                        break
+                    else:
+                        break
+                time.sleep(0.02)
+            time.sleep(0.08)
+            flush_keyboard_buffer()
+            if is_double:
+                return "11"
+            print(" (BẬT ĐÈN)")
+            return "1"
+        else:
+            sys.stdout.write(ch)
+            rest = input()
+            flush_keyboard_buffer()
+            return (ch + rest).strip()
+    except (ImportError, Exception):
+        pass
+
+    # Fallback cho Linux / Non-TTY
+    try:
+        cmd = input().strip()
+    except (KeyboardInterrupt, EOFError):
+        return "q"
+
+    if cmd in ("\x1b[A", "up", "UP", "+"):
+        return "up"
+    elif cmd in ("\x1b[B", "down", "DOWN", "-"):
+        return "down"
+    elif cmd.lower() in ("c", "color", "11"):
+        return "11"
+    return cmd
 
 def interactive_local_control(host: str, port: int, cafile: str = None, verify: bool = True):
     base_url = f"https://{host}:{port}/esp_local_ctrl"
@@ -264,7 +446,6 @@ def interactive_local_control(host: str, port: int, cafile: str = None, verify: 
         print("[*] TLS Security: Chế độ kiểm thử linh hoạt (Bỏ qua xác thực Root CA)")
 
     print(f"\n++++ Connecting to {host}:{port} ++++")
-    # Kiểm tra kết nối sơ bộ qua /version
     status, body = send_https_request(version_url, timeout=5.0, cafile=cafile, verify=verify)
     if status is None:
         err_msg = body.decode('utf-8', errors='ignore')
@@ -276,7 +457,7 @@ def interactive_local_control(host: str, port: int, cafile: str = None, verify: 
     print("==== Session Established ====")
 
     while True:
-        # Đọc danh sách và giá trị thuộc tính hiện tại
+        # Đọc thuộc tính từ thiết bị
         req_payload = make_cmd_get_prop_vals(indices=[0])
         status, body = send_https_request(control_url, data=req_payload, cafile=cafile, verify=verify)
         if status != 200:
@@ -288,52 +469,52 @@ def interactive_local_control(host: str, port: int, cafile: str = None, verify: 
             print("\n[!] Không nhận được thuộc tính nào từ thiết bị.")
             break
 
-        print("\n==== Available Properties ====")
-        print("{: >4} {: <16} {: <10} {: <16} {: <16}".format("S.N.", "Name", "Type", "Flags", "Value"))
-        for i, (name, val) in enumerate(props):
-            val_str = val.decode("utf-8", errors="ignore")
-            print("[{: >2}] {: <16} {: <10} {: <16} {: <16}".format(i + 1, name, "STRING", "", val_str))
+        print_status_dashboard(props)
 
-        try:
-            inval = input("\nSelect properties to set (0 to re-read, 'q' to quit) : ").strip()
-        except (KeyboardInterrupt, EOFError):
-            print("\nQuitting...")
-            break
-
-        if inval.lower() == 'q':
-            print("Quitting...")
-            break
-        elif inval == '0':
-            print("--> Đọc lại trạng thái mới nhất từ thiết bị...")
+        cmd = read_control_command()
+        if not cmd:
             continue
-        elif inval == '1':
-            prop_name = props[0][0]
-            try:
-                raw_val = input(f"Enter value to set for property ({prop_name}) : ").strip()
-            except (KeyboardInterrupt, EOFError):
-                print("\nQuitting...")
-                break
 
-            # Hỗ trợ cả nhập JSON đầy đủ và nhập phím tắt (true/false/on/off/1/0)
-            if raw_val.lower() in ("true", "1", "on"):
-                target_json = '{"status": true}'
-            elif raw_val.lower() in ("false", "0", "off"):
-                target_json = '{"status": false}'
-            else:
-                target_json = raw_val
+        if cmd.lower() in ('q', 'quit', 'exit'):
+            print("Đang thoát chương trình...")
+            break
+        elif cmd.lower() in ('r', 'refresh'):
+            print("--> Đang đọc lại trạng thái mới nhất...")
+            continue
 
-            print(f"--> Gửi lệnh ghi thuộc tính '{prop_name}': {target_json}")
-            req_set = make_cmd_set_prop_vals([(0, target_json.encode('utf-8'))])
-            set_status, set_body = send_https_request(control_url, data=req_set, cafile=cafile, verify=verify)
-            if set_status == 200:
-                print(f"[+] Cập nhật thành công! Trạng thái đèn đã chuyển sang: {target_json}")
-            else:
-                print(f"[-] Gửi lệnh thất bại: HTTP {set_status} - {set_body}")
+        # Ánh xạ lệnh người dùng sang payload gửi đi
+        target_payload = None
+        action_desc = ""
+        if cmd == "1":
+            target_payload = "1"
+            action_desc = "BẬT ĐÈN"
+        elif cmd == "0":
+            target_payload = "0"
+            action_desc = "TẮT ĐÈN"
+        elif cmd == "11":
+            target_payload = "11"
+            action_desc = "ĐỔI MÀU SẮC (Kế tiếp 8 màu RGB)"
+        elif cmd == "up":
+            target_payload = "+"
+            action_desc = "TĂNG ĐỘ SÁNG (+20%)"
+        elif cmd == "down":
+            target_payload = "-"
+            action_desc = "GIẢM ĐỘ SÁNG (-20%)"
         else:
-            print(f"Lựa chọn không hợp lệ: '{inval}' (Chọn 1 để đổi thuộc tính, 0 để đọc lại, q để thoát)")
+            target_payload = cmd
+            action_desc = f"Lệnh tùy chỉnh: '{cmd}'"
+
+        print(f"\n--> Đang gửi lệnh [{action_desc}] tới đèn ESP32...")
+        req_set = make_cmd_set_prop_vals([(0, target_payload.encode('utf-8'))])
+        set_status, set_body = send_https_request(control_url, data=req_set, cafile=cafile, verify=verify)
+        if set_status == 200:
+            print(f"[+] Lệnh [{action_desc}] thành công! Đang đồng bộ trạng thái...")
+            time.sleep(0.3)
+        else:
+            print(f"[-] Gửi lệnh thất bại: HTTP {set_status} - {set_body}")
 
 # =========================================================================
-# 4. AUTOMATED VERIFICATION SUITE (--auto)
+# 5. AUTOMATED VERIFICATION SUITE (--auto)
 # =========================================================================
 
 def test_local_control_auto(host: str, port: int, cafile: str = None, verify: bool = True):
@@ -355,7 +536,7 @@ def test_local_control_auto(host: str, port: int, cafile: str = None, verify: bo
     print("=" * 70)
 
     # 1. Kiểm tra Endpoint Version
-    print("\n[Bước 1/5] Kiểm tra phiên bản Local Control Server (/version)...")
+    print("\n[Bước 1/7] Kiểm tra phiên bản Local Control Server (/version)...")
     status, body = send_https_request(version_url, cafile=cafile, verify=verify)
     if status == 200:
         print(f"  [+] Thành công (HTTP {status})! Phiên bản: {body.decode('utf-8', errors='ignore')}")
@@ -363,69 +544,63 @@ def test_local_control_auto(host: str, port: int, cafile: str = None, verify: bo
         print(f"  [*] Endpoint /version phản hồi: HTTP {status}")
 
     # 2. Lấy số lượng thuộc tính đã đăng ký (CmdGetPropertyCount)
-    print("\n[Bước 2/5] Đọc số lượng thuộc tính đăng ký (CmdGetPropertyCount)...")
+    print("\n[Bước 2/7] Đọc số lượng thuộc tính đăng ký (CmdGetPropertyCount)...")
     req_payload = make_cmd_get_prop_count()
     status, body = send_https_request(control_url, data=req_payload, cafile=cafile, verify=verify)
     if status == 200:
         resp = decode_protobuf(body)
-        resp_count = resp.get(11)  # resp_get_prop_count
+        resp_count = resp.get(11)
         if resp_count:
             inner = decode_protobuf(resp_count[0])
             count = inner.get(2, [0])[0]
             print(f"  [+] Thành công! Số lượng thuộc tính trên thiết bị: {count}")
-        else:
-            print(f"  [+] Nhận phản hồi Protobuf hợp lệ từ thiết bị (Len: {len(body)} bytes)")
     else:
         print(f"  [-] Lỗi HTTP {status}: {body}")
 
-    # 3. Đọc trạng thái đèn hiện tại (CmdGetPropertyValues)
-    print("\n[Bước 3/5] Đọc trạng thái đèn hiện tại (CmdGetPropertyValues)...")
-    req_payload = make_cmd_get_prop_vals(indices=[0])
-    status, body = send_https_request(control_url, data=req_payload, cafile=cafile, verify=verify)
-    if status == 200:
-        props = parse_resp_get_prop_vals(body)
-        if props:
-            for name, val in props:
-                val_str = val.decode('utf-8', errors='ignore')
-                print(f"  [+] Thuộc tính '{name}' = {val_str}")
-        else:
-            print(f"  [*] Phản hồi thô: {body[:32]}...")
-    else:
-        print(f"  [-] Lỗi đọc thuộc tính: HTTP {status}")
-
-    def send_and_verify(step_num: int, state_bool: bool, action_name: str):
-        target_json = f'{{"status": {"true" if state_bool else "false"}}}'
-        print(f"\n[Bước {step_num}/5] Gửi lệnh {action_name} (CmdSetPropertyValues -> {target_json})...")
-        req_set = make_cmd_set_prop_vals([(0, target_json.encode('utf-8'))])
+    def execute_and_log(step_num: int, cmd_val: str, action_name: str):
+        print(f"\n[Bước {step_num}/7] Gửi lệnh {action_name} ('{cmd_val}')...")
+        req_set = make_cmd_set_prop_vals([(0, cmd_val.encode('utf-8'))])
         set_st, _ = send_https_request(control_url, data=req_set, cafile=cafile, verify=verify)
         if set_st == 200:
-            print(f"  [+] Lệnh {action_name} đã gửi thành công! (HTTP {set_st})")
+            print(f"  [+] Lệnh {action_name} gửi thành công! (HTTP {set_st})")
+            time.sleep(0.3)
             _, check_body = send_https_request(control_url, data=make_cmd_get_prop_vals([0]), cafile=cafile, verify=verify)
             verified_props = parse_resp_get_prop_vals(check_body)
             if verified_props:
-                for name, val in verified_props:
-                    print(f"  [+] Xác nhận trạng thái sau khi {action_name}: '{name}' = {val.decode('utf-8', errors='ignore')}")
-                    print(f"  ==> KIỂM TRA MẮT THƯỜNG: Thanh 8 LED WS2812B đã {'BẬT SÁNG' if state_bool else 'TẮT HOÀN TOÀN'}!")
+                raw_json = verified_props[0][1].decode('utf-8', errors='ignore')
+                print(f"  [+] Trạng thái cập nhật từ đèn: {raw_json}")
         else:
             print(f"  [-] Gửi lệnh {action_name} thất bại: HTTP {set_st}")
 
-    # 4. Gửi lệnh BẬT ĐÈN
-    send_and_verify(4, True, "BẬT ĐÈN")
-    time.sleep(2)
+    # 3. Gửi lệnh BẬT ĐÈN (1)
+    execute_and_log(3, "1", "BẬT ĐÈN (Phím 1)")
+    time.sleep(1)
 
-    # 5. Gửi lệnh TẮT ĐÈN
-    send_and_verify(5, False, "TẮT ĐÈN")
+    # 4. Gửi lệnh TĂNG ĐỘ SÁNG (+)
+    execute_and_log(4, "+", "TĂNG ĐỘ SÁNG (Phím [↑])")
+    time.sleep(1)
+
+    # 5. Gửi lệnh GIẢM ĐỘ SÁNG (-)
+    execute_and_log(5, "-", "GIẢM ĐỘ SÁNG (Phím [↓])")
+    time.sleep(1)
+
+    # 6. Gửi lệnh ĐỔI MÀU SẮC (11)
+    execute_and_log(6, "11", "ĐỔI MÀU SẮC (Gõ 11)")
+    time.sleep(1)
+
+    # 7. Gửi lệnh TẮT ĐÈN (0)
+    execute_and_log(7, "0", "TẮT ĐÈN (Phím 0)")
 
     print("\n" + "=" * 70)
-    print("  [*] HOÀN TẤT KIỂM THỬ ĐIỀU KHIỂN CỤC BỘ KÊNH WI-FI HTTPS (MỤC 8.5.2)!")
-    print("  [*] Thiết bị hỗ trợ điều khiển song song qua Bluetooth LE (GATT UUID 0x00FF)")
+    print("  [*] HOÀN TẤT KIỂM THỬ ĐIỀU KHIỂN CỤC BỘ TOÀN DIỆN!")
+    print("  [*] Hỗ trợ đầy đủ: BẬT/TẮT, Tăng/Giảm độ sáng, Đổi 8 màu sắc!")
     print("=" * 70)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test ESP32 Local Control Server via Protobuf/HTTPS (Interactive CLI & Auto)")
     parser.add_argument("--host", default=None, help="ESP32 IP address or mDNS hostname (Mặc định: Tự động tìm kiếm qua mDNS / quét mạng LAN)")
     parser.add_argument("--port", type=int, default=443, help="HTTPS port (default: 443)")
-    parser.add_argument("--auto", action="store_true", help="Run automated 5-step test sequence instead of interactive CLI")
+    parser.add_argument("--auto", action="store_true", help="Chạy chuỗi kiểm thử tự động toàn diện (Bật, Tăng/Giảm sáng, Đổi màu, Tắt)")
     parser.add_argument("--cafile", default=None, help="Đường dẫn tới file rootCA.pem (Mặc định: tự nhận diện trong scripts/ hoặc main/)")
     parser.add_argument("--no-verify", action="store_true", help="Bỏ qua xác thực chữ ký Root CA")
     args = parser.parse_args()

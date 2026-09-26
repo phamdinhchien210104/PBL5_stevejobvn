@@ -39,7 +39,7 @@
 #include "app_storage.h"
 #include "app_priv.h"
 
-#if CONFIG_BT_ENABLED
+#if CONFIG_LOCAL_CTRL_BLE_ENABLE
 #include "esp_bt.h"
 #include "esp_gap_ble_api.h"
 #include "esp_gatts_api.h"
@@ -151,7 +151,7 @@ static void wifi_initialize(void)
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 }
 
-static void wifi_station_start(void)
+static esp_err_t wifi_station_start(void)
 {
     wifi_config_t wifi_config = {
         .sta = {
@@ -185,8 +185,11 @@ static void wifi_station_start(void)
 
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "Đã sẵn sàng mạng LAN cho Local Control Server!");
+        return ESP_OK;
     } else {
-        ESP_LOGW(TAG, "Wi-Fi kết nối thất bại! Thiết bị vẫn có thể nhận điều khiển qua BLE.");
+        ESP_LOGE(TAG, "==> [Wi-Fi] Không thể kết nối tới AP SSID: '%s' sau %d lần thử lại!",
+                 CONFIG_LOCAL_CTRL_WIFI_SSID, CONFIG_LOCAL_CTRL_MAXIMUM_RETRY);
+        return ESP_FAIL;
     }
 }
 
@@ -195,7 +198,7 @@ static void wifi_station_start(void)
  * ========================================================================= */
 
 #define PROPERTY_NAME_STATUS "status"
-static char s_light_status_json[64] = "{\"status\": true}";
+static char s_light_status_json[256] = "{\"status\": true}";
 
 enum property_types {
     PROP_TYPE_TIMESTAMP = 0,
@@ -203,6 +206,24 @@ enum property_types {
     PROP_TYPE_BOOLEAN,
     PROP_TYPE_STRING,
 };
+
+static void build_light_status_json(void)
+{
+    bool state = app_driver_get_state();
+    uint8_t brightness = app_driver_get_brightness();
+    uint8_t color_idx = app_driver_get_color_index();
+    const char *color_name = app_driver_get_color_name();
+    uint8_t r = 0, g = 0, b = 0;
+    app_driver_get_rgb(&r, &g, &b);
+
+    snprintf(s_light_status_json, sizeof(s_light_status_json),
+             "{\"status\": %s, \"brightness\": %u, \"color\": \"%s\", \"color_idx\": %u, \"rgb\": [%u, %u, %u]}",
+             state ? "true" : "false",
+             (unsigned int)brightness,
+             color_name,
+             (unsigned int)(color_idx + 1),
+             (unsigned int)r, (unsigned int)g, (unsigned int)b);
+}
 
 static esp_err_t get_property_values(size_t props_count,
                                      const esp_local_ctrl_prop_t props[],
@@ -213,8 +234,7 @@ static esp_err_t get_property_values(size_t props_count,
         ESP_LOGI(TAG, "==> [HTTPS Local Ctrl] Yêu cầu đọc thuộc tính [%d/%d]: '%s'",
                  (int)(i + 1), (int)props_count, props[i].name);
         if (strncmp(PROPERTY_NAME_STATUS, props[i].name, strlen(PROPERTY_NAME_STATUS)) == 0) {
-            bool state = app_driver_get_state();
-            snprintf(s_light_status_json, sizeof(s_light_status_json), "{\"status\": %s}", state ? "true" : "false");
+            build_light_status_json();
             prop_values[i].size = strlen(s_light_status_json);
             prop_values[i].data = s_light_status_json;
             prop_values[i].free_fn = NULL;
@@ -238,37 +258,86 @@ static esp_err_t set_property_values(size_t props_count,
         ESP_LOGI(TAG, "==> [HTTPS Local Ctrl] Yêu cầu ghi thuộc tính [%d/%d]: '%s' (Kích thước: %d bytes)",
                  (int)(i + 1), (int)props_count, props[i].name, (int)prop_values[i].size);
         if (strncmp(PROPERTY_NAME_STATUS, props[i].name, strlen(PROPERTY_NAME_STATUS)) == 0) {
-            char val_buf[64] = {0};
+            char val_buf[128] = {0};
             size_t copy_len = prop_values[i].size < sizeof(val_buf) - 1 ? prop_values[i].size : sizeof(val_buf) - 1;
             if (copy_len > 0 && prop_values[i].data != NULL) {
                 memcpy(val_buf, prop_values[i].data, copy_len);
             }
             val_buf[copy_len] = '\0';
 
-            ESP_LOGI(TAG, "    Dữ liệu nhận được từ Client: '%s' (Byte 0: 0x%02X)",
-                     val_buf, (uint8_t)val_buf[0]);
+            // Loại bỏ khoảng trắng và ký tự xuống dòng dư thừa ở cuối chuỗi
+            while (copy_len > 0 && (val_buf[copy_len - 1] == '\r' || val_buf[copy_len - 1] == '\n' || val_buf[copy_len - 1] == ' ')) {
+                val_buf[--copy_len] = '\0';
+            }
+            char *cmd = val_buf;
+            while (*cmd == ' ') {
+                cmd++;
+            }
 
-            bool new_state = false;
-            if ((copy_len == 1 && ((uint8_t)val_buf[0] == 0x01 || val_buf[0] == '1')) ||
-                strstr(val_buf, "true") != NULL ||
-                strstr(val_buf, "\"status\": true") != NULL) {
-                new_state = true;
-            } else if ((copy_len == 1 && ((uint8_t)val_buf[0] == 0x00 || val_buf[0] == '0')) ||
-                       strstr(val_buf, "false") != NULL ||
-                       strstr(val_buf, "\"status\": false") != NULL) {
-                new_state = false;
+            ESP_LOGI(TAG, "    Lệnh nhận được từ Client: '%s' (Byte 0: 0x%02X)",
+                     cmd, (uint8_t)cmd[0]);
+
+            if (strcmp(cmd, "11") == 0 ||
+                strstr(cmd, "\"action\": \"11\"") != NULL ||
+                strstr(cmd, "\"action\":\"11\"") != NULL ||
+                strstr(cmd, "\"action\": \"color\"") != NULL ||
+                strstr(cmd, "\"action\":\"color\"") != NULL ||
+                strcasecmp(cmd, "color") == 0 ||
+                strcasecmp(cmd, "next") == 0) {
+                /* Lệnh 11: Đổi màu đèn tiếp theo (Tương đương double click nút Boot) */
+                app_driver_next_color();
+                ESP_LOGI(TAG, "==> [HTTPS Local Ctrl] Nhận lệnh '11': Đổi màu sắc tiếp theo -> %s",
+                         app_driver_get_color_name());
+            } else if (strcmp(cmd, "+") == 0 ||
+                       strcasecmp(cmd, "up") == 0 ||
+                       strstr(cmd, "\"action\": \"up\"") != NULL ||
+                       strstr(cmd, "\"action\":\"up\"") != NULL ||
+                       strstr(cmd, "\"action\": \"+\"") != NULL) {
+                /* Phím Mũi tên Lên: Tăng độ sáng (+20%) */
+                app_driver_adjust_brightness(+20);
+                ESP_LOGI(TAG, "==> [HTTPS Local Ctrl] Nhận phím [↑]: TĂNG độ sáng (+20%%) -> %d%%",
+                         app_driver_get_brightness());
+            } else if (strcmp(cmd, "-") == 0 ||
+                       strcasecmp(cmd, "down") == 0 ||
+                       strstr(cmd, "\"action\": \"down\"") != NULL ||
+                       strstr(cmd, "\"action\":\"down\"") != NULL ||
+                       strstr(cmd, "\"action\": \"-\"") != NULL) {
+                /* Phím Mũi tên Xuống: Giảm độ sáng (-20%) */
+                app_driver_adjust_brightness(-20);
+                ESP_LOGI(TAG, "==> [HTTPS Local Ctrl] Nhận phím [↓]: GIẢM độ sáng (-20%%) -> %d%%",
+                         app_driver_get_brightness());
+            } else if (strcmp(cmd, "1") == 0 ||
+                       (copy_len == 1 && ((uint8_t)cmd[0] == 0x01 || cmd[0] == '1')) ||
+                       strcasecmp(cmd, "on") == 0 ||
+                       strcasecmp(cmd, "true") == 0 ||
+                       strstr(cmd, "\"status\": true") != NULL ||
+                       strstr(cmd, "\"status\":true") != NULL) {
+                /* Phím 1: BẬT đèn */
+                app_driver_set_state(true);
+                ESP_LOGI(TAG, "==> [HTTPS Local Ctrl] Nhận lệnh '1': Cập nhật đèn BẬT (ON)");
+            } else if (strcmp(cmd, "0") == 0 ||
+                       (copy_len == 1 && ((uint8_t)cmd[0] == 0x00 || cmd[0] == '0')) ||
+                       strcasecmp(cmd, "off") == 0 ||
+                       strcasecmp(cmd, "false") == 0 ||
+                       strstr(cmd, "\"status\": false") != NULL ||
+                       strstr(cmd, "\"status\":false") != NULL) {
+                /* Phím 0: TẮT đèn */
+                app_driver_set_state(false);
+                ESP_LOGI(TAG, "==> [HTTPS Local Ctrl] Nhận lệnh '0': Cập nhật đèn TẮT (OFF)");
             } else {
-                ESP_LOGW(TAG, "Không nhận diện được giá trị! val_buf='%s'", val_buf);
-                return ESP_ERR_INVALID_ARG;
+                char *b_pos = strstr(cmd, "\"brightness\":");
+                if (b_pos) {
+                    int b_val = atoi(b_pos + 13);
+                    app_driver_set_brightness((uint8_t)b_val);
+                    ESP_LOGI(TAG, "==> [HTTPS Local Ctrl] Cập nhật độ sáng trực tiếp: %d%%", b_val);
+                } else {
+                    ESP_LOGW(TAG, "Không nhận diện được lệnh! cmd='%s'", cmd);
+                    return ESP_ERR_INVALID_ARG;
+                }
             }
 
-            app_driver_set_state(new_state);
-            snprintf(s_light_status_json, sizeof(s_light_status_json), "{\"status\": %s}", new_state ? "true" : "false");
-            if (new_state) {
-                app_driver_pulse_feedback(0, 255, 0);
-            }
-
-            ESP_LOGI(TAG, "==> [HTTPS Local Ctrl] Cập nhật đèn thành công: %s", new_state ? "BẬT (ON)" : "TẮT (OFF)");
+            build_light_status_json();
+            ESP_LOGI(TAG, "==> [HTTPS Local Ctrl] Trạng thái cập nhật: %s", s_light_status_json);
         }
     }
     return ESP_OK;
@@ -350,7 +419,7 @@ static void esp_local_ctrl_service_start(void)
  * 3. FALLBACK LOCAL CONTROL SERVER QUA BLUETOOTH LE (MỤC 8.5.3)
  * ========================================================================= */
 
-#if CONFIG_BT_ENABLED
+#if CONFIG_LOCAL_CTRL_BLE_ENABLE
 
 #define BLE_TAG "ble_local_ctrl"
 #define GATTS_SERVICE_UUID_LIGHT    0x00FF
@@ -496,12 +565,21 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                  param->write.handle, param->write.len);
         if (param->write.handle == s_char_write_handle && param->write.len > 0) {
             uint8_t val = param->write.value[0];
-            bool new_state = (val == 0x01 || val == '1');
-            ESP_LOGI(BLE_TAG, "    Giá trị ghi nhận: 0x%02X -> Đèn %s", val, new_state ? "BẬT" : "TẮT");
-            app_driver_set_state(new_state);
-            if (new_state) {
-                app_driver_pulse_feedback(0, 255, 0);
+            if (val == 11 || val == 0x0B || (param->write.len >= 2 && param->write.value[0] == '1' && param->write.value[1] == '1')) {
+                app_driver_next_color();
+                ESP_LOGI(BLE_TAG, "    Lệnh 11: Đổi màu đèn -> %s", app_driver_get_color_name());
+            } else if (val == '+') {
+                app_driver_adjust_brightness(+20);
+                ESP_LOGI(BLE_TAG, "    Phím [+]: Tăng độ sáng (+20%%) -> %d%%", app_driver_get_brightness());
+            } else if (val == '-') {
+                app_driver_adjust_brightness(-20);
+                ESP_LOGI(BLE_TAG, "    Phím [-]: Giảm độ sáng (-20%%) -> %d%%", app_driver_get_brightness());
+            } else {
+                bool new_state = (val == 0x01 || val == '1');
+                ESP_LOGI(BLE_TAG, "    Giá trị ghi nhận: 0x%02X -> Đèn %s", val, new_state ? "BẬT" : "TẮT");
+                app_driver_set_state(new_state);
             }
+            build_light_status_json();
         }
         if (param->write.need_rsp) {
             esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id,
@@ -548,7 +626,7 @@ static void ble_local_ctrl_init(void)
     ESP_LOGI(BLE_TAG, "BLE GATT Server khởi tạo thành công (Device Name: %s)", CONFIG_LOCAL_CTRL_BLE_DEVICE_NAME);
 }
 
-#endif /* CONFIG_BT_ENABLED */
+#endif /* CONFIG_LOCAL_CTRL_BLE_ENABLE */
 
 /* =========================================================================
  * 4. HÀM MAIN CHÍNH
@@ -578,29 +656,44 @@ void app_main(void)
     /* 3. Khởi tạo và kết nối Wi-Fi Station */
     ESP_LOGI(TAG, "[3/5] Khởi tạo Wi-Fi Station...");
     wifi_initialize();
-    wifi_station_start();
+    esp_err_t wifi_ret = wifi_station_start();
 
-    /* 4. Khởi động Local Control Server qua Wi-Fi + HTTPS + mDNS (Mục 8.5.1) */
-    ESP_LOGI(TAG, "[4/5] Khởi động Local Control HTTPS Server & mDNS...");
-    esp_local_ctrl_service_start();
+    if (wifi_ret == ESP_OK) {
+        /* 4. Khởi động Local Control Server qua Wi-Fi + HTTPS + mDNS (Mục 8.5.1) */
+        ESP_LOGI(TAG, "[4/5] Khởi động Local Control HTTPS Server & mDNS...");
+        esp_local_ctrl_service_start();
 
-#if CONFIG_BT_ENABLED
+        ESP_LOGI(TAG, "==========================================================");
+        ESP_LOGI(TAG, "  HỆ THỐNG ĐIỀU KHIỂN CỤC BỘ QUA WI-FI ĐÃ SẴN SÀNG!      ");
+        ESP_LOGI(TAG, "  - Kênh Wi-Fi HTTPS : https://%s.local/esp_local_ctrl/control", CONFIG_LOCAL_CTRL_MDNS_HOST_NAME);
+        ESP_LOGI(TAG, "  - Trạng thái Wi-Fi : KẾT NỐI THÀNH CÔNG (ĐÃ CÓ IP)      ");
+        ESP_LOGI(TAG, "==========================================================");
+    } else {
+        ESP_LOGE(TAG, "==========================================================");
+        ESP_LOGE(TAG, "  [LỖI MẠNG] KẾT NỐI WI-FI THẤT BẠI!                     ");
+        ESP_LOGE(TAG, "  - Không thể kết nối tới AP SSID: '%s'                   ", CONFIG_LOCAL_CTRL_WIFI_SSID);
+        ESP_LOGE(TAG, "  - Kênh Wi-Fi HTTPS & mDNS KHÔNG KHỞI ĐỘNG (Không có IP) ");
+        ESP_LOGE(TAG, "  - Vui lòng kiểm tra lại SSID và Mật khẩu Wi-Fi!         ");
+        ESP_LOGE(TAG, "==========================================================");
+    }
+
+#if CONFIG_LOCAL_CTRL_BLE_ENABLE
     /* 5. Khởi động Fallback Local Control Server qua BLE GATT (Mục 8.5.3) */
-    ESP_LOGI(TAG, "[5/5] Khởi động Fallback Local Control Server qua BLE...");
+    ESP_LOGI(TAG, "[5/5] Khởi động Fallback Local Control Server qua BLE GATT...");
     ble_local_ctrl_init();
-#endif
-
-    ESP_LOGI(TAG, "==========================================================");
-    ESP_LOGI(TAG, "  HỆ THỐNG ĐIỀU KHIỂN CỤC BỘ ĐÃ HOẠT ĐỘNG HOÀN HẢO!       ");
-    ESP_LOGI(TAG, "  - Kênh Wi-Fi HTTPS: https://%s.local/esp_local_ctrl/control", CONFIG_LOCAL_CTRL_MDNS_HOST_NAME);
     ESP_LOGI(TAG, "  - Kênh BLE GATT   : %s (Service 0x00FF, Write 0x0001)  ", CONFIG_LOCAL_CTRL_BLE_DEVICE_NAME);
-    ESP_LOGI(TAG, "==========================================================");
+#else
+    ESP_LOGI(TAG, "[5/5] Kênh BLE GATT Server đang TẮT (Chỉ điều khiển qua Wi-Fi LAN)");
+#endif
 
     int count = 0;
     while (1) {
-        ESP_LOGI(TAG, "[Heartbeat #%02d] Light Status: %s | Free Heap: %lu bytes",
+        bool wifi_ok = (s_wifi_event_group && (xEventGroupGetBits(s_wifi_event_group) & WIFI_CONNECTED_BIT));
+        ESP_LOGI(TAG, "[Heartbeat #%02d] Light: %s (%d%%) | Wi-Fi: %s | Free Heap: %lu bytes",
                  ++count,
                  app_driver_get_state() ? "ON" : "OFF",
+                 (int)app_driver_get_brightness(),
+                 wifi_ok ? "CONNECTED" : "DISCONNECTED (No IP)",
                  (unsigned long)esp_get_free_heap_size());
         vTaskDelay(pdMS_TO_TICKS(30000));
     }
