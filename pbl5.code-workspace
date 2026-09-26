@@ -29,11 +29,11 @@
             "path": "device_firmware/7_insights"
         },
         {
-            "name": "🧪 [TC] 8.5_local_control",
+            "name": "🧪 [TC] 8.5.1 & 8.5.2 - local_control",
             "path": "test_case/local_control"
         },
         {
-            "name": "🧪 [TC] 11_advanced_https_ota",
+            "name": "🧪 [TC] 11 - advanced_https_ota",
             "path": "test_case/advanced_https_ota"
         },
         {
@@ -41,7 +41,7 @@
             "path": "test_case/https_server"
         },
         {
-            "name": "🧪 [TC] gatt_server",
+            "name": "🧪 [TC] 8.5.3 - gatt_server",
             "path": "test_case/gatt_server"
         },
         {

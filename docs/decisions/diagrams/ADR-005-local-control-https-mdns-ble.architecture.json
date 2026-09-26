@@ -18,7 +18,7 @@
         "id": "ble-gatt-flow",
         "label": "Fallback Bluetooth LE GATT (8.5.3)",
         "focus": ["ble_client", "ble_gatts", "app_driver", "light_driver", "target_ws2812"],
-        "note": "When router is offline, smartphone pairs via BLE to ESP32-LOCAL-LIGHT, writing 0x01/0x00 to Characteristic 0x0001 for zero-router control."
+        "note": "When router is offline, smartphone pairs via BLE to ESP32C3-LIGHT, writing 0x01/0x00 to Characteristic 0xEE01 for zero-router control."
       },
       {
         "id": "python-script-verification",
@@ -39,7 +39,7 @@
     { "id": "ble_client", "type": "frontend", "label": "BLE Smartphone", "sublabel": "nRF Connect / App", "pos": [40, 330], "size": [140, 60] },
     { "id": "mdns_engine", "type": "backend", "label": "mDNS Discovery", "sublabel": "my_esp_ctrl_device.local", "pos": [310, 90], "size": [150, 60] },
     { "id": "https_server", "type": "security", "label": "HTTPS Server (Port 443)", "sublabel": "TLS X.509 cacert/prvtkey", "pos": [310, 200], "size": [150, 60] },
-    { "id": "ble_gatts", "type": "backend", "label": "BLE GATT Server", "sublabel": "Service 0x00FF / Char 0x0001", "pos": [310, 330], "size": [150, 60] },
+    { "id": "ble_gatts", "type": "backend", "label": "BLE GATT Server", "sublabel": "Service 0x00EE / 0x00FF", "pos": [310, 330], "size": [150, 60] },
     { "id": "local_ctrl_mgr", "type": "backend", "label": "esp_local_ctrl Engine", "sublabel": "HTTPD Transport & Dispatch", "pos": [570, 140], "size": [150, 60] },
     { "id": "prop_status", "type": "database", "label": "Property 'status'", "sublabel": "JSON {\"status\": bool}", "pos": [570, 250], "size": [150, 60] },
     { "id": "app_driver", "type": "backend", "label": "app_driver Core", "sublabel": "State Sync & Visual Pulse", "pos": [830, 260], "size": [150, 60] },
@@ -80,7 +80,7 @@
       "title": "Kênh Dự Phòng Bluetooth LE GATT Server (8.5.3)",
       "items": [
         "Hoạt động độc lập không cần router Wi-Fi khi cúp điện hoặc mang ra ngoài trời.",
-        "GATT Service 0x00FF, Characteristic 0x0001 (Write) và 0x0002 (Read).",
+        "GATT Service 0x00EE (Write 0xEE01) và Service 0x00FF (Read 0xFF01).",
         "Nhận lệnh từ smartphone qua app nRF Connect, chuyển trạng thái tức thì."
       ]
     },
