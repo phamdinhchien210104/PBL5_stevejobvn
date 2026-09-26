@@ -1,36 +1,86 @@
 {
     "folders": [
         {
-            "name": "🌟 1_blink",
+            "name": "🚀 [DF] 1_blink",
             "path": "device_firmware/1_blink"
         },
         {
-            "name": "💡 2_light_drivers",
+            "name": "🚀 [DF] 2_light_drivers",
             "path": "device_firmware/2_light_drivers"
         },
         {
-            "name": "📶 3_wifi_connection",
+            "name": "🚀 [DF] 3_wifi_connection",
             "path": "device_firmware/3_wifi_connection"
         },
         {
-            "name": "📲 4_network_config",
+            "name": "🚀 [DF] 4_network_config",
             "path": "device_firmware/4_network_config"
         },
         {
-            "name": "☁️ 5_rainmaker",
+            "name": "🚀 [DF] 5_rainmaker",
             "path": "device_firmware/5_rainmaker"
         },
         {
-            "name": "⚡ 6_project_optimize",
+            "name": "🚀 [DF] 6_project_optimize",
             "path": "device_firmware/6_project_optimize"
         },
         {
-            "name": "📊 7_insights",
+            "name": "🚀 [DF] 7_insights",
             "path": "device_firmware/7_insights"
         },
         {
-            "name": "📁 Repository Root (Full Source & Apps)",
-            "path": "."
+            "name": "🧪 [TC] 8.5_local_control",
+            "path": "test_case/local_control"
+        },
+        {
+            "name": "🧪 [TC] 11_advanced_https_ota",
+            "path": "test_case/advanced_https_ota"
+        },
+        {
+            "name": "🧪 [TC] https_server",
+            "path": "test_case/https_server"
+        },
+        {
+            "name": "🧪 [TC] gatt_server",
+            "path": "test_case/gatt_server"
+        },
+        {
+            "name": "🧪 [TC] mdns_discovery",
+            "path": "test_case/mdns_discovery"
+        },
+        {
+            "name": "🧪 [TC] coap",
+            "path": "test_case/coap"
+        },
+        {
+            "name": "🧪 [TC] mqtt_tcp",
+            "path": "test_case/mqtt_tcp"
+        },
+        {
+            "name": "🧪 [TC] broadcast_discovery",
+            "path": "test_case/broadcast_discovery"
+        },
+        {
+            "name": "🧪 [TC] multicast_discovery",
+            "path": "test_case/multicast_discovery"
+        },
+        {
+            "name": "🧪 [TC] tcp_socket",
+            "path": "test_case/tcp_socket"
+        },
+        {
+            "name": "🧪 [TC] udp_socket",
+            "path": "test_case/udp_socket"
+        },
+        {
+            "name": "📁 [Root] Repository",
+            "path": ".",
+            "settings": {
+                "files.exclude": {
+                    "device_firmware": true,
+                    "test_case": true
+                }
+            }
         }
     ],
     "settings": {
@@ -59,6 +109,7 @@
             "--completion-style=detailed",
             "--header-insertion=never"
         ],
-        "vscode-edge-devtools.webhint": false
+        "vscode-edge-devtools.webhint": false,
+        "explorer.excludeGitIgnore": false
     }
 }

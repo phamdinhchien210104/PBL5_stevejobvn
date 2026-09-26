@@ -2,7 +2,7 @@
 
 - **Trạng thái**: Đã phê duyệt (Accepted)
 - **Ngày quyết định**: 2026-09-22
-- **Phạm vi**: `test_case/local_control`, `scripts/test_local_control.py`, `docs/progress/8.5 Practice - Local Control in Smart Light Project.md`
+- **Phạm vi**: `test_case/local_control`, `test_case/local_control/scripts/test_local_control.py`, `docs/progress/8.5 Practice - Local Control in Smart Light Project.md`
 - **Sơ đồ kiến trúc tương tác (Archify)**: [Xem sơ đồ trực quan (HTML)](./diagrams/ADR-005-local-control-https-mdns-ble.html)
 
 ---
@@ -19,6 +19,7 @@ Mã nguồn mẫu ban đầu trong giáo trình (`test_case/local_control`) gặ
 - **Lỗi cú pháp biên dịch**: Tệp `app_main.c` sử dụng dấu ngoặc kép tiếng Trung (`”mdns.h“`, `“esp_https_server.h”`) gây lỗi biên dịch compiler ngay lập tức.
 - **Lỗi liên kết CMake nhúng chứng chỉ**: Tệp `main/CMakeLists.txt` không đăng ký `cacert.pem` và `prvtkey.pem` vào tham số `EMBED_TXTFILES` của `idf_component_register`, dẫn đến lỗi thiếu symbol `_binary_cacert_pem_start` khi liên kết (linking).
 - **Lỗi đường dẫn phụ thuộc**: `CMakeLists.txt` trỏ vào đường dẫn lỗi thời `../../Project/components/` vốn không còn tồn tại trong cấu trúc thư mục hiện đại `device_firmware/components/`.
+- **Lỗi tương thích nạp chứng chỉ HTTPS trên ESP-IDF v6.0.2**: Bản gốc gán chứng chỉ máy chủ vào `https_conf.cacert_pem` (vốn dành cho Client Verification/mTLS), trong khi ESP-IDF v6 bắt buộc nạp qua `https_conf.servercert` và `servercert_len`. Sự sai lệch này khiến máy chủ báo lỗi `No Server certificate supplied` (`ESP_ERR_INVALID_ARG 0x102`) và gây ra vòng lặp crash reboot vô tận khi khởi động.
 - **Lạc hậu tầng Driver**: Mã nguồn cũ vẫn điều khiển 5 kênh PWM analog rời rạc thay vì thanh LED WS2812B 8 hạt chuẩn hóa qua Hardware SPI2 DMA @ 3.2MHz trên GPIO 4 và Nút Boot HAL đa cử chỉ.
 - **Thiếu kịch bản kiểm thử tự động**: Người dùng không có sẵn công cụ client để xác thực các endpoint HTTP/HTTPS nội bộ.
 
@@ -103,7 +104,7 @@ Hệ thống triển khai đồng thời hai kênh điều khiển cục bộ đ
 ## 3. Quyết định: Cung Cấp Kịch Bản Kiểm Thử Tự Động Client Bằng Python (Mục 8.5.2)
 
 ### 3.1. Nội dung quyết định
-Xây dựng kịch bản Python [`scripts/test_local_control.py`](file:///d:/Document/PBL5_stevejobvn/scripts/test_local_control.py) đóng vai trò là một HTTPS Client nội bộ:
+Xây dựng kịch bản Python [`test_case/local_control/scripts/test_local_control.py`](file:///d:/Document/PBL5_stevejobvn/test_case/local_control/scripts/test_local_control.py) đóng vai trò là một HTTPS Client nội bộ:
 - Sử dụng mô-đun chuẩn `urllib.request` của Python (không cần cài đặt thêm thư viện ngoài).
 - Thiết lập SSL context `check_hostname = False` và `verify_mode = CERT_NONE` để tương thích hoàn toàn với chứng chỉ tự ký dùng trong môi trường phát triển cục bộ.
 - Thực hiện chu trình kiểm tra tự động 4 bước:
@@ -129,7 +130,7 @@ Xây dựng kịch bản Python [`scripts/test_local_control.py`](file:///d:/Doc
    - *Đặc biệt lưu ý*: Trên ESP32-C3 & ESP32-S3, phần cứng không có Classic Bluetooth nên việc gọi `esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT)` trả về `ESP_ERR_NOT_SUPPORTED` (sẽ abort nếu dùng `ESP_ERROR_CHECK`). Do đó lệnh này được bọc điều kiện `#if CONFIG_IDF_TARGET_ESP32`.
    - Cấu hình bắt buộc `CONFIG_BT_BLUEDROID_ENABLED=y` trong `sdkconfig.defaults` để đồng bộ với tầng BLE GATT Server.
 2. **Giao thức Protobuf chuẩn hóa của `esp_local_ctrl`**: Endpoint `/esp_local_ctrl/control` yêu cầu tuần tự hóa Protobuf thay vì plain JSON thô.
-   - *Biện pháp*: Kịch bản `scripts/test_local_control.py` tích hợp bộ mã hóa/giải mã Protobuf thuần Python (0 dependency) để giao tiếp chuẩn xác 100% với firmware và ứng dụng di động.
+   - *Biện pháp*: Kịch bản `test_case/local_control/scripts/test_local_control.py` tích hợp bộ mã hóa/giải mã Protobuf thuần Python (0 dependency) để giao tiếp chuẩn xác 100% với firmware và ứng dụng di động.
 3. **Quản lý bộ nhớ callback `get_property_values`**: Trường `free_fn` trong `esp_local_ctrl_prop_val_t` phải được gán `NULL` để tránh crash do gọi con trỏ rác khi giải phóng bộ nhớ.
 4. **Chứng chỉ TLS tự ký (Self-signed)**: Trình duyệt hoặc client nghiêm ngặt sẽ cảnh báo bảo mật.
    - *Biện pháp*: Kịch bản kiểm thử cấu hình bypass xác thực chứng chỉ trong môi trường phát triển nội bộ LAN.
@@ -149,7 +150,7 @@ Xây dựng kịch bản Python [`scripts/test_local_control.py`](file:///d:/Doc
    ```
 3. **Kiểm thử kênh Wi-Fi HTTPS bằng script Python**:
    ```bash
-   python scripts/test_local_control.py --host my_esp_ctrl_device.local
+   python test_case/local_control/scripts/test_local_control.py --host my_esp_ctrl_device.local
    ```
 4. **Kiểm thử kênh BLE GATT bằng ứng dụng điện thoại**:
    - Dùng app **nRF Connect** kết nối thiết bị `ESP32-LOCAL-LIGHT`.

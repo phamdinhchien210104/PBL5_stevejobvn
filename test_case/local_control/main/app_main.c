@@ -98,11 +98,28 @@ static void event_handler(void *arg, esp_event_base_t event_base,
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
+
+        wifi_ap_record_t ap_info = {0};
+        char bssid_str[24] = "N/A";
+        char ssid_str[33] = CONFIG_LOCAL_CTRL_WIFI_SSID;
+        int channel = 0;
+        int rssi = 0;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            snprintf(ssid_str, sizeof(ssid_str), "%s", (char *)ap_info.ssid);
+            snprintf(bssid_str, sizeof(bssid_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                     ap_info.bssid[0], ap_info.bssid[1], ap_info.bssid[2],
+                     ap_info.bssid[3], ap_info.bssid[4], ap_info.bssid[5]);
+            channel = ap_info.primary;
+            rssi = ap_info.rssi;
+        }
+
         ESP_LOGI(TAG, "==========================================================");
-        ESP_LOGI(TAG, "==> [Wi-Fi] KẾT NỐI THÀNH CÔNG! ĐÃ CÓ ĐỊA CHỈ IP:");
-        ESP_LOGI(TAG, "    Địa chỉ IP    : " IPSTR, IP2STR(&event->ip_info.ip));
-        ESP_LOGI(TAG, "    Địa chỉ Mask  : " IPSTR, IP2STR(&event->ip_info.netmask));
-        ESP_LOGI(TAG, "    Địa chỉ GW    : " IPSTR, IP2STR(&event->ip_info.gw));
+        ESP_LOGI(TAG, "==> [Wi-Fi] KẾT NỐI THÀNH CÔNG! ĐÃ CÓ ĐỊA CHỈ IP:        ");
+        ESP_LOGI(TAG, "  - Tên Wi-Fi (SSID) : %s", ssid_str);
+        ESP_LOGI(TAG, "  - BSSID (MAC AP)   : %s (Kênh %d, Sóng %d dBm)", bssid_str, channel, rssi);
+        ESP_LOGI(TAG, "  - Địa chỉ IP cấp   : " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "  - Địa chỉ Mask     : " IPSTR, IP2STR(&event->ip_info.netmask));
+        ESP_LOGI(TAG, "  - Địa chỉ Gateway  : " IPSTR, IP2STR(&event->ip_info.gw));
         ESP_LOGI(TAG, "==========================================================");
         s_retry_num = 0;
         app_driver_set_wifi_status(WIFI_STATUS_CONNECTED);
@@ -121,6 +138,15 @@ static void wifi_initialize(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+    /* Cấu hình quốc gia Việt Nam (kênh 1 - 13) */
+    wifi_country_t country = {
+        .cc = "VN",
+        .schan = 1,
+        .nchan = 13,
+        .policy = WIFI_COUNTRY_POLICY_AUTO,
+    };
+    esp_wifi_set_country(&country);
+
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 }
@@ -131,16 +157,26 @@ static void wifi_station_start(void)
         .sta = {
             .ssid = CONFIG_LOCAL_CTRL_WIFI_SSID,
             .password = CONFIG_LOCAL_CTRL_WIFI_PASSWORD,
+            .scan_method = WIFI_ALL_CHANNEL_SCAN,
+            .sort_method = WIFI_CONNECT_AP_BY_SIGNAL,
             .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+            .threshold.rssi = -127,
             .pmf_cfg = {
-                .capable = true,
+                .capable = false,
                 .required = false
             },
+            .disable_wpa3_compatible_mode = 1,
+            .failure_retry_cnt = 3,
         },
     };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    /* Tối ưu hóa băng thông HT20, tắt Modem Sleep & hạ TX Power 12dBm cho ESP32-C3 SuperMini */
+    esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW20);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_max_tx_power(48); // 12 dBm
 
     ESP_LOGI(TAG, "wifi_station_start hoàn tất. Đang chờ đồng bộ kết nối...");
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
@@ -249,16 +285,16 @@ static void esp_local_ctrl_service_start(void)
 
     extern const unsigned char cacert_pem_start[] asm("_binary_cacert_pem_start");
     extern const unsigned char cacert_pem_end[]   asm("_binary_cacert_pem_end");
-    https_conf.cacert_pem = cacert_pem_start;
-    https_conf.cacert_len = cacert_pem_end - cacert_pem_start;
+    https_conf.servercert = cacert_pem_start;
+    https_conf.servercert_len = cacert_pem_end - cacert_pem_start;
 
     extern const unsigned char prvtkey_pem_start[] asm("_binary_prvtkey_pem_start");
     extern const unsigned char prvtkey_pem_end[]   asm("_binary_prvtkey_pem_end");
     https_conf.prvtkey_pem = prvtkey_pem_start;
     https_conf.prvtkey_len = prvtkey_pem_end - prvtkey_pem_start;
 
-    ESP_LOGI(TAG, "Đã nạp chứng chỉ SSL CA (%d bytes) và Private Key (%d bytes)",
-             https_conf.cacert_len, https_conf.prvtkey_len);
+    ESP_LOGI(TAG, "Đã nạp chứng chỉ SSL Server (%d bytes) và Private Key (%d bytes)",
+             (int)https_conf.servercert_len, (int)https_conf.prvtkey_len);
 
     /* 2. Cấu hình Dịch vụ esp_local_ctrl */
     esp_local_ctrl_config_t config = {
@@ -520,6 +556,11 @@ static void ble_local_ctrl_init(void)
 
 void app_main(void)
 {
+    /* Tối ưu hóa mức độ log (Observability & Signal-to-Noise Ratio):
+     * Ẩn các log debug/thủ tục nội bộ từ Wi-Fi PHY và API driver để làm sạch màn hình terminal */
+    esp_log_level_set("wifi", ESP_LOG_WARN);
+    esp_log_level_set("light_driver", ESP_LOG_WARN);
+
     ESP_LOGI(TAG, "==========================================================");
     ESP_LOGI(TAG, "   PBL5 Smart Light - Chương 8: Điều Khiển Cục Bộ (8.5)   ");
     ESP_LOGI(TAG, "   Hỗ trợ đa mục tiêu: ESP32-S3 & ESP32-C3                ");
@@ -557,10 +598,10 @@ void app_main(void)
 
     int count = 0;
     while (1) {
-        ESP_LOGI(TAG, "[Heartbeat %03d] Light Status: %s | Free Heap: %lu bytes",
-                 count++,
+        ESP_LOGI(TAG, "[Heartbeat #%02d] Light Status: %s | Free Heap: %lu bytes",
+                 ++count,
                  app_driver_get_state() ? "ON" : "OFF",
                  (unsigned long)esp_get_free_heap_size());
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        vTaskDelay(pdMS_TO_TICKS(30000));
     }
 }

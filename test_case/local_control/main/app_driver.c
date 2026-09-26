@@ -1,11 +1,15 @@
 /*
  * ESP32 Smart Light Example - Chapter 8: Local Control in Smart Light Project
  *
- * Driver implementation:
- * 1. Physical Boot button with Multi-Gestures (Click, Double Click, Long Press)
+ * Driver implementation (Kế thừa hoàn chỉnh từ device_firmware/4_network_config):
+ * 1. Physical Boot button with Multi-Gestures:
+ *    - Single click: Bật / Tắt đèn chốt trạng thái (Latching Toggle)
+ *    - Double click: Đổi 8 màu sắc (RGB cycle)
+ *    - Long press hold: Dimming vô cấp (5% - 100% Stepless Dimming)
+ *    - Long press release: Chốt độ sáng và tự động đảo chiều tăng/giảm cho lần sau
  * 2. WS2812B NeoPixel 8-Bit Strip via Hardware SPI2 DMA @ 3.2MHz
  * 3. Dynamic Visual LED indication for Wi-Fi & Local Control state
- */
+*/
 
 #include <stdio.h>
 #include "esp_log.h"
@@ -23,9 +27,25 @@
 
 static const char *TAG = "app_driver";
 
+// Chu kỳ và tham số Dimming vô cấp (Stepless Dimming) kế thừa từ 4_network_config
+#define DIM_STEP_DIVIDER_TICKS 12   /**< 12 ticks x 5ms = 60ms mỗi nhịp điều chỉnh độ sáng */
+#define DIM_STEP_PERCENT       2    /**< Thay đổi 2% mỗi nhịp (~2.88 giây quét toàn dải 5% - 100%) */
+#define DIM_MIN_PERCENT        5    /**< Ngưỡng sáng tối thiểu an toàn (không tắt đen) */
+#define DIM_MAX_PERCENT        100  /**< Ngưỡng sáng tối đa */
+
+typedef enum {
+    DIM_DIR_DOWN = 0,
+    DIM_DIR_UP   = 1,
+} dim_direction_t;
+
 static bool g_output_state = true;
-static bool s_is_breathing = false;
 static uint8_t s_color_index = 0;
+
+// Biến trạng thái quản lý Dimming vô cấp
+static bool s_is_dimming = false;
+static dim_direction_t s_dim_direction = DIM_DIR_DOWN;
+static uint32_t s_dim_tick_counter = 0;
+static uint8_t s_current_brightness = 100;
 
 /* Bảng màu mẫu 8 màu RGB trực quan khi nhấn đúp nút Boot */
 static const uint8_t s_colors[][3] = {
@@ -41,12 +61,14 @@ static const uint8_t s_colors[][3] = {
 #define NUM_COLORS (sizeof(s_colors) / sizeof(s_colors[0]))
 
 /**
- * @brief Callback khi nhấn 1 lần (Single click): Bật / Tắt đèn
+ * @brief Callback khi nhấn 1 lần (Single click): Bật / Tắt đèn chốt trạng thái
  */
-static void push_btn_cb(void *arg)
+static void single_click_cb(void *arg)
 {
     g_output_state = !g_output_state;
-    ESP_LOGI(TAG, "==> [Nút Boot - Nhấn 1 lần]: %s Đèn", g_output_state ? "BẬT" : "TẮT");
+    ESP_LOGI(TAG, "==> [Single Click GPIO%d] Lật trạng thái Bật/Tắt (Chốt): %s",
+             LIGHT_BUTTON_GPIO,
+             g_output_state ? "BẬT (ON)" : "TẮT (OFF)");
     app_driver_set_state(g_output_state);
 }
 
@@ -59,58 +81,107 @@ static void double_click_cb(void *arg)
         g_output_state = true;
         light_driver_set_switch(true);
     }
-    if (s_is_breathing) {
-        light_driver_breath_stop();
-        s_is_breathing = false;
-    }
     s_color_index = (s_color_index + 1) % NUM_COLORS;
     uint8_t r = s_colors[s_color_index][0];
     uint8_t g = s_colors[s_color_index][1];
     uint8_t b = s_colors[s_color_index][2];
-    ESP_LOGI(TAG, "==> [Nút Boot - Nhấn 2 lần]: Đổi màu [%d/%d] -> R=%d, G=%d, B=%d",
+    ESP_LOGI(TAG, "==> [Double Click] Đổi màu [%d/%d] -> R=%d, G=%d, B=%d",
              s_color_index + 1, (int)NUM_COLORS, r, g, b);
     light_driver_set_rgb(r, g, b);
 }
 
 /**
- * @brief Callback khi nhấn giữ (Long press): Bật / Tắt hiệu ứng thở (Breathing)
+ * @brief Callback khi bắt đầu nhấn giữ (BUTTON_LONG_PRESS_START): Bắt đầu Dimming vô cấp
  */
-static void long_press_cb(void *arg)
+static void long_press_start_cb(void *arg)
 {
+    s_is_dimming = true;
+    s_dim_tick_counter = 0;
+    s_current_brightness = light_driver_get_brightness();
+
+    // Nếu đèn đang tắt -> Tự động bật lên ở mức tối thiểu và đặt hướng tăng sáng
     if (!g_output_state) {
         g_output_state = true;
+        s_current_brightness = DIM_MIN_PERCENT;
+        s_dim_direction = DIM_DIR_UP;
         light_driver_set_switch(true);
-    }
-    s_is_breathing = !s_is_breathing;
-    if (s_is_breathing) {
-        uint8_t r = s_colors[s_color_index][0];
-        uint8_t g = s_colors[s_color_index][1];
-        uint8_t b = s_colors[s_color_index][2];
-        ESP_LOGI(TAG, "==> [Nút Boot - Nhấn Giữ]: BẬT hiệu ứng Thở (Breathing) theo màu R=%d, G=%d, B=%d", r, g, b);
-        light_driver_breath_start(r, g, b);
+        light_driver_set_brightness(s_current_brightness);
+        ESP_LOGI(TAG, "==> [Long Press Start] Đèn đang tắt -> Tự động BẬT ở mức %d%% và bắt đầu TĂNG sáng",
+                 DIM_MIN_PERCENT);
     } else {
-        ESP_LOGI(TAG, "==> [Nút Boot - Nhấn Giữ]: TẮT hiệu ứng Thở -> Giữ sáng tĩnh");
-        light_driver_breath_stop();
-        light_driver_set_rgb(s_colors[s_color_index][0],
-                             s_colors[s_color_index][1],
-                             s_colors[s_color_index][2]);
+        if (s_current_brightness >= DIM_MAX_PERCENT) {
+            s_dim_direction = DIM_DIR_DOWN;
+        } else if (s_current_brightness <= DIM_MIN_PERCENT) {
+            s_dim_direction = DIM_DIR_UP;
+        }
+        ESP_LOGI(TAG, "==> [Long Press Start] Bắt đầu Dimming vô cấp (Hướng: %s, Mức sáng hiện tại: %d%%)",
+                 s_dim_direction == DIM_DIR_UP ? "TĂNG (Up)" : "GIẢM (Down)",
+                 s_current_brightness);
     }
 }
 
-int app_driver_set_state(bool state)
+/**
+ * @brief Callback duy trì khi nhấn giữ (BUTTON_LONG_PRESS_HOLD): Điều chỉnh độ sáng mượt mà
+ */
+static void long_press_hold_cb(void *arg)
+{
+    if (!s_is_dimming) {
+        return;
+    }
+
+    s_dim_tick_counter++;
+    if (s_dim_tick_counter < DIM_STEP_DIVIDER_TICKS) {
+        return;
+    }
+    s_dim_tick_counter = 0;
+
+    if (s_dim_direction == DIM_DIR_UP) {
+        if (s_current_brightness < DIM_MAX_PERCENT) {
+            if (s_current_brightness + DIM_STEP_PERCENT >= DIM_MAX_PERCENT) {
+                s_current_brightness = DIM_MAX_PERCENT;
+                ESP_LOGI(TAG, "==> [Stepless Dimming] Đạt độ sáng cực đại (MAX %d%%) -> DỪNG", DIM_MAX_PERCENT);
+            } else {
+                s_current_brightness += DIM_STEP_PERCENT;
+            }
+            light_driver_set_brightness(s_current_brightness);
+        }
+    } else { // DIM_DIR_DOWN
+        if (s_current_brightness > DIM_MIN_PERCENT) {
+            if (s_current_brightness <= DIM_MIN_PERCENT + DIM_STEP_PERCENT) {
+                s_current_brightness = DIM_MIN_PERCENT;
+                ESP_LOGI(TAG, "==> [Stepless Dimming] Đạt độ sáng tối thiểu (MIN %d%%) -> DỪNG", DIM_MIN_PERCENT);
+            } else {
+                s_current_brightness -= DIM_STEP_PERCENT;
+            }
+            light_driver_set_brightness(s_current_brightness);
+        }
+    }
+}
+
+/**
+ * @brief Callback khi nhả phím giữ (BUTTON_PRESS_UP): Chốt độ sáng, đảo chiều dimming, KHÔNG tắt đèn
+ */
+static void press_up_cb(void *arg)
+{
+    if (s_is_dimming) {
+        s_is_dimming = false;
+        s_dim_direction = (s_dim_direction == DIM_DIR_UP) ? DIM_DIR_DOWN : DIM_DIR_UP;
+        ESP_LOGI(TAG, "==> [Long Press Release] Đã chốt độ sáng: %d%% và lưu NVS. Lần nhấn giữ tới sẽ: %s",
+                 s_current_brightness,
+                 s_dim_direction == DIM_DIR_UP ? "TĂNG (Up)" : "GIẢM (Down)");
+    }
+}
+
+int IRAM_ATTR app_driver_set_state(bool state)
 {
     g_output_state = state;
-    if (s_is_breathing) {
-        light_driver_breath_stop();
-        s_is_breathing = false;
-    }
     ESP_LOGI(TAG, "==> [Driver] Cập nhật trạng thái đèn: %s", state ? "BẬT (ON)" : "TẮT (OFF)");
     return light_driver_set_switch(state);
 }
 
 bool app_driver_get_state(void)
 {
-    return g_output_state;
+    return light_driver_get_switch();
 }
 
 int app_driver_toggle_state(void)
@@ -124,10 +195,6 @@ int app_driver_set_color(uint8_t red, uint8_t green, uint8_t blue)
         g_output_state = true;
         light_driver_set_switch(true);
     }
-    if (s_is_breathing) {
-        light_driver_breath_stop();
-        s_is_breathing = false;
-    }
     ESP_LOGI(TAG, "==> [Driver] Đặt màu RGB: R=%d, G=%d, B=%d", red, green, blue);
     return light_driver_set_rgb(red, green, blue);
 }
@@ -139,13 +206,11 @@ void app_driver_set_wifi_status(wifi_status_t status)
         ESP_LOGI(TAG, "==> [Wi-Fi LED] Đang kết nối tới Router Wi-Fi... (Đèn thở Vàng/Cam)");
         light_driver_set_switch(true);
         light_driver_breath_start(255, 160, 0);
-        s_is_breathing = true;
         break;
 
     case WIFI_STATUS_CONNECTED:
         ESP_LOGI(TAG, "==> [Wi-Fi LED] Đã có địa chỉ IP! (Đèn xanh lá cây tĩnh)");
         light_driver_breath_stop();
-        s_is_breathing = false;
         light_driver_set_switch(true);
         light_driver_set_rgb(0, 255, 0);
         break;
@@ -153,7 +218,6 @@ void app_driver_set_wifi_status(wifi_status_t status)
     case WIFI_STATUS_FAILED:
         ESP_LOGE(TAG, "==> [Wi-Fi LED] Kết nối thất bại sau số lần thử lại! (Đèn đỏ cảnh báo)");
         light_driver_breath_stop();
-        s_is_breathing = false;
         light_driver_set_switch(true);
         light_driver_set_rgb(255, 0, 0);
         break;
@@ -189,14 +253,25 @@ void app_driver_init(void)
 
     button_handle_t btn_handle = iot_button_create(&btn_cfg);
     if (btn_handle) {
-        iot_button_register_cb(btn_handle, BUTTON_SINGLE_CLICK, push_btn_cb);
-        iot_button_register_cb(btn_handle, BUTTON_DOUBLE_CLICK, double_click_cb);
-        iot_button_register_cb(btn_handle, BUTTON_LONG_PRESS_START, long_press_cb);
+        // Đăng ký các sự kiện phản hồi phím bấm kế thừa hoàn chỉnh từ 4_network_config:
+        // 1. Nhấn 1 lần: Đảo trạng thái Bật/Tắt chốt (Latching Toggle)
+        iot_button_register_cb(btn_handle, BUTTON_SINGLE_CLICK, single_click_cb);
 
-        ESP_LOGI(TAG, "Đã đăng ký callback nút bấm:");
-        ESP_LOGI(TAG, " - Nhấn 1 lần (Click): Bật/Tắt đèn");
-        ESP_LOGI(TAG, " - Nhấn 2 lần (Double Click): Đổi 8 màu sắc (RGB)");
-        ESP_LOGI(TAG, " - Nhấn giữ (Long Press): Bật/Tắt hiệu ứng thở");
+        // 2. Nhấn đúp: Đổi màu sắc 8 màu RGB
+        iot_button_register_cb(btn_handle, BUTTON_DOUBLE_CLICK, double_click_cb);
+
+        // 3. Nhấn giữ: Bắt đầu và duy trì Dimming vô cấp đảo chiều (5% - 100%)
+        iot_button_register_cb(btn_handle, BUTTON_LONG_PRESS_START, long_press_start_cb);
+        iot_button_register_cb(btn_handle, BUTTON_LONG_PRESS_HOLD, long_press_hold_cb);
+
+        // 4. Nhả phím giữ: Chốt độ sáng, đảo chiều dimming, KHÔNG tắt đèn
+        iot_button_register_cb(btn_handle, BUTTON_PRESS_UP, press_up_cb);
+
+        ESP_LOGI(TAG, "Đã đăng ký callback nút bấm thành công (Kế thừa hoàn chỉnh từ Chương 4):");
+        ESP_LOGI(TAG, " - Nhấn 1 lần (Single click): Lật trạng thái Bật/Tắt đèn (Chốt)");
+        ESP_LOGI(TAG, " - Nhấn 2 lần (Double click): Đổi màu sắc (8 màu RGB)");
+        ESP_LOGI(TAG, " - Nhấn giữ (Long press hold): Dimming vô cấp tự dừng tại 100%% hoặc 5%% (~2.8s)");
+        ESP_LOGI(TAG, " - Nhả nút giữ (Release): Chốt độ sáng vào NVS, đảo chiều dim cho lần sau");
     } else {
         ESP_LOGE(TAG, "Khởi tạo iot_button thất bại!");
     }
@@ -211,7 +286,15 @@ void app_driver_init(void)
     };
     ESP_ERROR_CHECK(light_driver_init(&driver_config));
 
+    // Khởi tạo trạng thái dimming theo độ sáng vừa khôi phục từ Flash
+    s_current_brightness = light_driver_get_brightness();
+    if (s_current_brightness == 0) {
+        s_current_brightness = 100;
+    }
+    s_dim_direction = (s_current_brightness >= 50) ? DIM_DIR_DOWN : DIM_DIR_UP;
+
     g_output_state = light_driver_get_switch();
-    ESP_LOGI(TAG, "Khởi tạo driver thành công! Trạng thái đèn ban đầu: %s",
-             g_output_state ? "BẬT" : "TẮT");
+    ESP_LOGI(TAG, "Khởi tạo driver thành công! Trạng thái đèn hiện tại: %s | Độ sáng: %d%%",
+             g_output_state ? "BẬT (ON)" : "TẮT (OFF)",
+             s_current_brightness);
 }
