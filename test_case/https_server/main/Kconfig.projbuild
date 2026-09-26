@@ -1,0 +1,40 @@
+menu "HTTPS Server Configuration"
+
+    config HTTPS_SERVER_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "Minh Toan"
+        help
+            SSID of the Access Point to connect to for Web Server.
+
+    config HTTPS_SERVER_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "21012004"
+        help
+            Password of the Access Point to connect to.
+
+    config HTTPS_SERVER_MAX_RETRY
+        int "Maximum Wi-Fi Connection Retries"
+        default 5
+        help
+            Number of retries before reporting Wi-Fi connection failure.
+
+    config HTTPS_SERVER_SUPPORT_TLS
+        bool "Enable TLS / HTTPS Server (Port 443)"
+        default y
+        help
+            When enabled, starts HTTPS Server with SSL/TLS encryption on Port 443.
+            When disabled, starts standard HTTP Server on Port 80.
+
+    config HTTPS_SERVER_PORT_HTTP
+        int "HTTP Server Port"
+        default 80
+        help
+            Port for unencrypted HTTP Web Server.
+
+    config HTTPS_SERVER_PORT_HTTPS
+        int "HTTPS Server Port"
+        default 443
+        help
+            Port for TLS-encrypted HTTPS Server.
+
+endmenu
