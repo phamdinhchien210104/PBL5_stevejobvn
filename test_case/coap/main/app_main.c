@@ -1,106 +1,187 @@
-/* ESP32-C3 Light Example
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
+/*
+ * ESP32-C3 CoAP Light Control
+ *
+ * ESP-IDF 5.4.2
+ * libcoap 4.3.x
+ *
+ * Wi-Fi
+ *   ↓
+ * CoAP UDP Server
+ *   ↓
+ * /light
+ *   ├── GET  -> ON / OFF
+ *   └── PUT  -> ON / OFF
+ *
+ * Example:
+ *   GET /light
+ *   PUT /light with "ON"
+ *   PUT /light with "OFF"
+ */
 
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 
-#include "esp_system.h"
-#include "esp_wifi.h"
-#include "esp_event.h"
 #include "esp_log.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_wifi.h"
+#include "esp_err.h"
 #include "nvs_flash.h"
 
-#include "lwip/sockets.h"
-#include "lwip/err.h"
-#include "lwip/sys.h"
+#include <coap3/coap.h>
 
 #include "app_priv.h"
-#if 1
-/* Needed until coap_dtls.h becomes a part of libcoap proper */
-#include "libcoap.h"
-#include "coap_dtls.h"
-#endif
-#include "coap.h"
 
-#define LIGHT_SUPPORT_DTLS      1
-#define LIGHT_ESP_WIFI_SSID     "YOUR-SSID"
-#define LIGHT_ESP_WIFI_PASS     "YOUR-PASS"
-#define LIGHT_ESP_MAXIMUM_RETRY 5
 
-/* The event group allows multiple bits for each event, but we only care about two events:
- * - we are connected to the AP with an IP
- * - we failed to connect after the maximum amount of retries */
+/* ============================================================
+ * Configuration
+ * ============================================================ */
+
+#define WIFI_SSID       "Ryan"
+#define WIFI_PASSWORD   "quy43200411"
+
+#define WIFI_MAX_RETRY  5
+
+#define COAP_PORT       5683
+
+
+/* ============================================================
+ * TAG
+ * ============================================================ */
+
+static const char *TAG = "COAP_LIGHT";
+
+
+/* ============================================================
+ * Wi-Fi
+ * ============================================================ */
+
+static EventGroupHandle_t s_wifi_event_group;
+
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
-static const char *TAG = "coap";
-
-/* FreeRTOS event group to signal when we are connected*/
-static EventGroupHandle_t s_wifi_event_group = NULL;
 static int s_retry_num = 0;
 
-static void event_handler(void *arg, esp_event_base_t event_base,
-                          int32_t event_id, void *event_data)
+
+/* ============================================================
+ * LED state
+ * ============================================================ */
+
+static bool led_state = false;
+
+
+/* ============================================================
+ * Wi-Fi Event Handler
+ * ============================================================ */
+
+static void wifi_event_handler(void *arg,
+                               esp_event_base_t event_base,
+                               int32_t event_id,
+                               void *event_data)
 {
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+    if (event_base == WIFI_EVENT &&
+        event_id == WIFI_EVENT_STA_START) {
+
+        ESP_LOGI(TAG, "Wi-Fi STA started");
+
         esp_wifi_connect();
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_num < LIGHT_ESP_MAXIMUM_RETRY) {
+
+    } else if (event_base == WIFI_EVENT &&
+               event_id == WIFI_EVENT_STA_DISCONNECTED) {
+
+        if (s_retry_num < WIFI_MAX_RETRY) {
+
             esp_wifi_connect();
+
             s_retry_num++;
-            ESP_LOGI(TAG, "retry to connect to the AP");
+
+            ESP_LOGW(TAG,
+                     "Retry Wi-Fi connection (%d/%d)",
+                     s_retry_num,
+                     WIFI_MAX_RETRY);
+
         } else {
-            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+
+            xEventGroupSetBits(
+                s_wifi_event_group,
+                WIFI_FAIL_BIT
+            );
+
         }
-        ESP_LOGI(TAG, "connect to the AP fail");
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+
+    } else if (event_base == IP_EVENT &&
+               event_id == IP_EVENT_STA_GOT_IP) {
+
+        ip_event_got_ip_t *event =
+            (ip_event_got_ip_t *)event_data;
+
+        ESP_LOGI(TAG,
+                 "Got IP address: " IPSTR,
+                 IP2STR(&event->ip_info.ip));
+
         s_retry_num = 0;
-        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+
+        xEventGroupSetBits(
+            s_wifi_event_group,
+            WIFI_CONNECTED_BIT
+        );
     }
 }
 
+
+/* ============================================================
+ * Wi-Fi Initialization
+ * ============================================================ */
+
 static void wifi_initialize(void)
 {
+    ESP_LOGI(TAG, "Initializing Wi-Fi...");
+
     s_wifi_event_group = xEventGroupCreate();
 
-    /* Initialize TCP/IP */
     ESP_ERROR_CHECK(esp_netif_init());
 
-    /* Initialize the event loop */
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(
+        esp_event_loop_create_default()
+    );
 
-    /* Initialize Wi-Fi including netif with default config */
     esp_netif_create_default_wifi_sta();
+
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    /* Register our event handler for Wi-Fi and IP related events */
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
-}
+    ESP_ERROR_CHECK(
+        esp_wifi_init(&cfg)
+    );
 
-static void wifi_station_initialize(void)
-{
-    /* Start Wi-Fi in station mode */
+    ESP_ERROR_CHECK(
+        esp_event_handler_register(
+            WIFI_EVENT,
+            ESP_EVENT_ANY_ID,
+            &wifi_event_handler,
+            NULL
+        )
+    );
+
+    ESP_ERROR_CHECK(
+        esp_event_handler_register(
+            IP_EVENT,
+            IP_EVENT_STA_GOT_IP,
+            &wifi_event_handler,
+            NULL
+        )
+    );
+
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = LIGHT_ESP_WIFI_SSID,
-            .password = LIGHT_ESP_WIFI_PASS,
-            /* Setting a password implies station will connect to all security modes including WEP/WPA.
-             * However these modes are deprecated and not advisable to be used. Incase your Access point
-             * doesn't support WPA2, these mode can be enabled by commenting below line */
+            .ssid = WIFI_SSID,
+            .password = WIFI_PASSWORD,
+
             .threshold.authmode = WIFI_AUTH_WPA2_PSK,
 
             .pmf_cfg = {
@@ -109,258 +190,530 @@ static void wifi_station_initialize(void)
             },
         },
     };
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "wifi_station_initialize finished.");
+    ESP_ERROR_CHECK(
+        esp_wifi_set_mode(WIFI_MODE_STA)
+    );
 
-    /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
-     * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+    ESP_ERROR_CHECK(
+        esp_wifi_set_config(
+            WIFI_IF_STA,
+            &wifi_config
+        )
+    );
 
-    /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-     * happened. */
+    ESP_ERROR_CHECK(
+        esp_wifi_start()
+    );
+
+    ESP_LOGI(TAG,
+             "Connecting to Wi-Fi: %s",
+             WIFI_SSID);
+
+    EventBits_t bits = xEventGroupWaitBits(
+        s_wifi_event_group,
+        WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+        pdFALSE,
+        pdFALSE,
+        portMAX_DELAY
+    );
+
     if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "connected to ap SSID:%s password:%s", LIGHT_ESP_WIFI_SSID, LIGHT_ESP_WIFI_PASS);
+
+        ESP_LOGI(TAG,
+                 "Wi-Fi connected successfully");
+
     } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s", LIGHT_ESP_WIFI_SSID, LIGHT_ESP_WIFI_PASS);
+
+        ESP_LOGE(TAG,
+                 "Failed to connect to Wi-Fi");
+
     } else {
-        ESP_LOGE(TAG, "UNEXPECTED EVENT");
+
+        ESP_LOGE(TAG,
+                 "Unexpected Wi-Fi event");
     }
 }
 
-static char buf[100] = "{\"status\": true}";
-// CoAP GET 方法回调处理函数
-static void esp_coap_get(coap_context_t *ctx, coap_resource_t *resource,
-                  coap_session_t *session,
-                  coap_pdu_t *request, coap_binary_t *token,
-                  coap_string_t *query, coap_pdu_t *response)
+
+/* ============================================================
+ * CoAP GET /light
+ *
+ * Client:
+ *   GET coap://ESP32_IP/light
+ *
+ * Response:
+ *   ON
+ *   OFF
+ * ============================================================ */
+
+static void esp_coap_get(
+    coap_resource_t *resource,
+    coap_session_t *session,
+    const coap_pdu_t *request,
+    const coap_string_t *query,
+    coap_pdu_t *response)
 {
-    coap_add_data_blocked_response(resource, session, request, response, token,
-                                   COAP_MEDIATYPE_TEXT_PLAIN, 0,
-                                   strlen(buf),
-                                   (const u_char *)buf);
+    const char *status;
+
+    (void)resource;
+    (void)session;
+    (void)request;
+    (void)query;
+
+    if (led_state) {
+        status = "ON";
+    } else {
+        status = "OFF";
+    }
+
+    ESP_LOGI(TAG,
+             "CoAP GET /light -> %s",
+             status);
+
+    /*
+     * HTTP-like:
+     * 2.05 Content
+     */
+    coap_pdu_set_code(
+        response,
+        COAP_RESPONSE_CODE_CONTENT
+    );
+
+    /*
+     * Response payload
+     */
+    coap_add_data(
+        response,
+        strlen(status),
+        (const uint8_t *)status
+    );
 }
 
-// CoAP PUT 方法回调处理函数
-static void esp_coap_put(coap_context_t *ctx,
-                  coap_resource_t *resource,
-                  coap_session_t *session,
-                  coap_pdu_t *request,
-                  coap_binary_t *token,
-                  coap_string_t *query,
-                  coap_pdu_t *response)
+
+/* ============================================================
+ * CoAP PUT /light
+ *
+ * Client:
+ *   PUT /light
+ *   Payload = ON
+ *
+ * or
+ *
+ *   PUT /light
+ *   Payload = OFF
+ * ============================================================ */
+
+static void esp_coap_put(
+    coap_resource_t *resource,
+    coap_session_t *session,
+    const coap_pdu_t *request,
+    const coap_string_t *query,
+    coap_pdu_t *response)
 {
-    size_t size;
-    const unsigned char *data;
+    size_t size = 0;
 
-    coap_resource_notify_observers(resource, NULL);
+    const uint8_t *data = NULL;
 
-    /* 读取收到的 CoAP 数据 */
-    (void)coap_get_data(request, &size, &data);
+    (void)resource;
+    (void)session;
+    (void)query;
 
-    if (size) {
-        if (strncmp((char *)data, buf, size)) {
-            memcpy(buf, data, size);
-            buf[size] = 0;
-            response->code = COAP_RESPONSE_CODE(204);
-        } else {
-            response->code = COAP_RESPONSE_CODE(500);
-        }
-    } else { /* size 为 0 表示接收错误 */
-        response->code = COAP_RESPONSE_CODE(500);
+    /*
+     * Get request payload
+     */
+    if (!coap_get_data(
+            request,
+            &size,
+            &data)) {
+
+        ESP_LOGW(TAG,
+                 "CoAP PUT: no payload");
+
+        coap_pdu_set_code(
+            response,
+            COAP_RESPONSE_CODE_BAD_REQUEST
+        );
+
+        return;
+    }
+
+    if (size == 0 || data == NULL) {
+
+        ESP_LOGW(TAG,
+                 "CoAP PUT: empty payload");
+
+        coap_pdu_set_code(
+            response,
+            COAP_RESPONSE_CODE_BAD_REQUEST
+        );
+
+        return;
+    }
+
+
+    /* ========================================================
+     * Command ON
+     * ======================================================== */
+
+    if (size == 2 &&
+        memcmp(data, "ON", 2) == 0) {
+
+        led_state = true;
+
+        /*
+         * Control physical LED
+         */
+        app_driver_set_state(true);
+
+        ESP_LOGI(TAG,
+                 "CoAP PUT /light -> ON");
+
+        /*
+         * 2.04 Changed
+         */
+        coap_pdu_set_code(
+            response,
+            COAP_RESPONSE_CODE_CHANGED
+        );
+
+    }
+
+
+    /* ========================================================
+     * Command OFF
+     * ======================================================== */
+
+    else if (size == 3 &&
+             memcmp(data, "OFF", 3) == 0) {
+
+        led_state = false;
+
+        /*
+         * Control physical LED
+         */
+        app_driver_set_state(false);
+
+        ESP_LOGI(TAG,
+                 "CoAP PUT /light -> OFF");
+
+        /*
+         * 2.04 Changed
+         */
+        coap_pdu_set_code(
+            response,
+            COAP_RESPONSE_CODE_CHANGED
+        );
+
+    }
+
+
+    /* ========================================================
+     * Unknown command
+     * ======================================================== */
+
+    else {
+
+        ESP_LOGW(TAG,
+                 "Unknown CoAP command");
+
+        ESP_LOG_BUFFER_HEXDUMP(
+            TAG,
+            data,
+            size,
+            ESP_LOG_WARN
+        );
+
+        coap_pdu_set_code(
+            response,
+            COAP_RESPONSE_CODE_BAD_REQUEST
+        );
     }
 }
 
-static void esp_create_coap_server(void)
+
+/* ============================================================
+ * CoAP Server
+ * ============================================================ */
+
+static void coap_server_task(void *pvParameters)
 {
     coap_context_t *ctx = NULL;
-    coap_address_t serv_addr;
+
     coap_resource_t *resource = NULL;
 
-    while (1) {
-        coap_endpoint_t *ep = NULL;
-        unsigned wait_ms;
-
-        // 创建 CoAP 服务端套接字
-        coap_address_init(&serv_addr);
-        serv_addr.addr.sin6.sin6_family = AF_INET6;
-        serv_addr.addr.sin6.sin6_port   = htons(COAP_DEFAULT_PORT);
-
-        // 创建 CoAP ctx
-        ctx = coap_new_context(NULL);
-        if (!ctx) {
-            ESP_LOGE(TAG, "coap_new_context() failed");
-            continue;
-        }
-
-        // 设置 CoAP 节点
-        ep = coap_new_endpoint(ctx, &serv_addr, COAP_PROTO_UDP);
-        if (!ep) {
-            ESP_LOGE(TAG, "udp: coap_new_endpoint() failed");
-            goto clean_up;
-        }
-
-        // 设置 CoAP 资源 URI
-        resource = coap_resource_init(coap_make_str_const("light"), 0);
-        if (!resource) {
-            ESP_LOGE(TAG, "coap_resource_init() failed");
-            goto clean_up;
-        }
-
-        // 注册 CoAP 资源 URI 对应的 GET 和 PUT 方法回调处理函数
-        coap_register_handler(resource, COAP_REQUEST_GET, esp_coap_get);
-        coap_register_handler(resource, COAP_REQUEST_PUT, esp_coap_put);
-
-        // 设置 CoAP get 资源可见
-        coap_resource_set_get_observable(resource, 1);
-
-        // 添加资源至 CoAP ctx
-        coap_add_resource(ctx, resource);
-
-        wait_ms = COAP_RESOURCE_CHECK_TIME * 1000;
-
-        while (1) {
-            // 等待接收 CoAP 数据
-            int result = coap_run_once(ctx, wait_ms);
-            if (result < 0) {
-                break;
-            } else if (result && (unsigned)result < wait_ms) {
-                // 递减等待的时间
-                wait_ms -= result;
-            } else {
-                // 重置等待时间
-                wait_ms = COAP_RESOURCE_CHECK_TIME * 1000;
-            }
-        }
-    }
-clean_up:
-    coap_free_context(ctx);
-    coap_cleanup();
-}
-
-static char psk_key[] = "esp32c3_key";
-
-static void esp_create_coaps_server(void)
-{
-    coap_context_t *ctx = NULL;
     coap_address_t serv_addr;
-    coap_resource_t *resource = NULL;
+
+    coap_endpoint_t *endpoint = NULL;
+
+    (void)pvParameters;
+
+
+    ESP_LOGI(TAG,
+             "Starting CoAP server...");
+
+
+    /* --------------------------------------------------------
+     * Initialize CoAP library
+     * -------------------------------------------------------- */
+
+    coap_startup();
+
+
+    /* --------------------------------------------------------
+     * Initialize server address
+     *
+     * Use IPv6 as in the original libcoap example.
+     * ESP-IDF/LwIP can support IPv6 socket endpoint.
+     * -------------------------------------------------------- */
+
+    coap_address_init(&serv_addr);
+
+    serv_addr.addr.sin6.sin6_family = AF_INET6;
+
+    serv_addr.addr.sin6.sin6_port =
+        htons(COAP_PORT);
+
+
+    /* --------------------------------------------------------
+     * Create CoAP context
+     * -------------------------------------------------------- */
+
+    ctx = coap_new_context(NULL);
+
+    if (ctx == NULL) {
+
+        ESP_LOGE(TAG,
+                 "Failed to create CoAP context");
+
+        coap_cleanup();
+
+        vTaskDelete(NULL);
+
+        return;
+    }
+
+
+    /* --------------------------------------------------------
+     * Create UDP endpoint
+     * -------------------------------------------------------- */
+
+    endpoint = coap_new_endpoint(
+        ctx,
+        &serv_addr,
+        COAP_PROTO_UDP
+    );
+
+    if (endpoint == NULL) {
+
+        ESP_LOGE(TAG,
+                 "Failed to create CoAP UDP endpoint");
+
+        coap_free_context(ctx);
+
+        coap_cleanup();
+
+        vTaskDelete(NULL);
+
+        return;
+    }
+
+
+    /* --------------------------------------------------------
+     * Create /light resource
+     * -------------------------------------------------------- */
+
+    resource = coap_resource_init(
+        coap_make_str_const("light"),
+        0
+    );
+
+    if (resource == NULL) {
+
+        ESP_LOGE(TAG,
+                 "Failed to create /light resource");
+
+        coap_free_context(ctx);
+
+        coap_cleanup();
+
+        vTaskDelete(NULL);
+
+        return;
+    }
+
+
+    /* --------------------------------------------------------
+     * Register GET handler
+     * -------------------------------------------------------- */
+
+    coap_register_handler(
+        resource,
+        COAP_REQUEST_GET,
+        esp_coap_get
+    );
+
+
+    /* --------------------------------------------------------
+     * Register PUT handler
+     * -------------------------------------------------------- */
+
+    coap_register_handler(
+        resource,
+        COAP_REQUEST_PUT,
+        esp_coap_put
+    );
+
+
+    /* --------------------------------------------------------
+     * Add resource to CoAP context
+     * -------------------------------------------------------- */
+
+    coap_add_resource(
+        ctx,
+        resource
+    );
+
+
+    ESP_LOGI(TAG,
+             "================================");
+
+    ESP_LOGI(TAG,
+             "CoAP server started");
+
+    ESP_LOGI(TAG,
+             "Port: %d",
+             COAP_PORT);
+
+    ESP_LOGI(TAG,
+             "Resource: /light");
+
+    ESP_LOGI(TAG,
+             "GET  /light -> LED status");
+
+    ESP_LOGI(TAG,
+             "PUT  /light -> ON / OFF");
+
+    ESP_LOGI(TAG,
+             "================================");
+
+
+    /* --------------------------------------------------------
+     * CoAP event loop
+     * -------------------------------------------------------- */
 
     while (1) {
-        coap_endpoint_t *ep = NULL;
-        unsigned wait_ms;
 
-        // 创建 CoAP 服务端套接字
-        coap_address_init(&serv_addr);
-        serv_addr.addr.sin6.sin6_family = AF_INET6;
-        serv_addr.addr.sin6.sin6_port   = htons(COAP_DEFAULT_PORT);
+        int result;
 
-        // 创建 CoAP ctx
-        ctx = coap_new_context(NULL);
-        if (!ctx) {
-            ESP_LOGE(TAG, "coap_new_context() failed");
-            continue;
-        }
+        result = coap_run_once(
+            ctx,
+            1000
+        );
 
-        // 添加 PSK 加密秘钥
-        coap_context_set_psk(ctx, "CoAP", (const uint8_t *)psk_key, sizeof(psk_key) - 1);
+        if (result < 0) {
 
-        // 设置 CoAP 节点
-        ep = coap_new_endpoint(ctx, &serv_addr, COAP_PROTO_UDP);
-        if (!ep) {
-            ESP_LOGE(TAG, "udp: coap_new_endpoint() failed");
-            goto clean_up;
-        }
+            ESP_LOGE(TAG,
+                     "coap_run_once() failed");
 
-        // 添加 DTLS 节点与端口
-        if (coap_dtls_is_supported()) {
-            serv_addr.addr.sin6.sin6_port = htons(COAPS_DEFAULT_PORT);
-            ep = coap_new_endpoint(ctx, &serv_addr, COAP_PROTO_DTLS);
-            if (!ep) {
-                ESP_LOGE(TAG, "dtls: coap_new_endpoint() failed");
-                goto clean_up;
-            } else {
-                ESP_LOGI(TAG, "MbedTLS (D)TLS Server Mode not configured");
-            }
-        }
-
-        // 设置 CoAP 资源 URI
-        resource = coap_resource_init(coap_make_str_const("light"), 0);
-        if (!resource) {
-            ESP_LOGE(TAG, "coap_resource_init() failed");
-            goto clean_up;
-        }
-
-        // 注册 CoAP 资源 URI 对应的 GET 和 PUT 方法回调处理函数
-        coap_register_handler(resource, COAP_REQUEST_GET, esp_coap_get);
-        coap_register_handler(resource, COAP_REQUEST_PUT, esp_coap_put);
-
-        // 设置 CoAP get 资源可见
-        coap_resource_set_get_observable(resource, 1);
-
-        // 添加资源至 CoAP ctx
-        coap_add_resource(ctx, resource);
-
-        wait_ms = COAP_RESOURCE_CHECK_TIME * 1000;
-
-        while (1) {
-            // 等待接收 CoAP 数据
-            int result = coap_run_once(ctx, wait_ms);
-            if (result < 0) {
-                break;
-            } else if (result && (unsigned)result < wait_ms) {
-                // 递减等待的时间
-                wait_ms -= result;
-            } else {
-                // 重置等待时间
-                wait_ms = COAP_RESOURCE_CHECK_TIME * 1000;
-            }
+            break;
         }
     }
-clean_up:
+
+
+    /* --------------------------------------------------------
+     * Cleanup
+     * -------------------------------------------------------- */
+
+    ESP_LOGI(TAG,
+             "Stopping CoAP server");
+
     coap_free_context(ctx);
+
     coap_cleanup();
+
+    vTaskDelete(NULL);
 }
 
-void app_main()
+
+/* ============================================================
+ * Main
+ * ============================================================ */
+
+void app_main(void)
 {
-    int i = 0;
-    ESP_LOGE(TAG, "app_main");
+    ESP_LOGI(TAG,
+             "================================");
 
-    /**
-     * @brief NVS Flash initialization
-     */
-    ESP_LOGI(TAG, "NVS Flash initialization");
-    app_storage_init();
+    ESP_LOGI(TAG,
+             "ESP32-C3 CoAP Light Control");
 
-    /**
-     * @brief Application driver initialization
-     */
-    ESP_LOGI(TAG, "Application driver initialization");
+    ESP_LOGI(TAG,
+             "ESP-IDF 5.4.2");
+
+    ESP_LOGI(TAG,
+             "================================");
+
+
+    /* --------------------------------------------------------
+     * Initialize NVS
+     * -------------------------------------------------------- */
+
+    esp_err_t ret = nvs_flash_init();
+
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
+        ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+
+        ESP_ERROR_CHECK(
+            nvs_flash_erase()
+        );
+
+        ret = nvs_flash_init();
+    }
+
+    ESP_ERROR_CHECK(ret);
+
+
+    /* --------------------------------------------------------
+     * Initialize LED driver
+     * -------------------------------------------------------- */
+
+    ESP_LOGI(TAG,
+             "Initializing LED driver...");
+
     app_driver_init();
 
-    /**
-     * @brief Wi-Fi initialization
-     */
-    ESP_LOGI(TAG, "Wi-Fi initialization");
+
+    /* --------------------------------------------------------
+     * Make sure LED starts OFF
+     * -------------------------------------------------------- */
+
+    led_state = false;
+
+    app_driver_set_state(false);
+
+
+    /* --------------------------------------------------------
+     * Initialize Wi-Fi
+     * -------------------------------------------------------- */
+
     wifi_initialize();
 
-    /**
-     * @brief Wi-Fi Station initialization
-     */
-    ESP_LOGI(TAG, "Wi-Fi Station initialization");
-    wifi_station_initialize();
 
-#if LIGHT_SUPPORT_DTLS
-    esp_create_coaps_server();
-#else
-    esp_create_coap_server();
-#endif
+    /* --------------------------------------------------------
+     * Start CoAP server
+     * -------------------------------------------------------- */
 
-    while (1) {
-        ESP_LOGI(TAG, "[%02d] Hello world!", i++);
-        vTaskDelay(pdMS_TO_TICKS(5000));
-    }
+    xTaskCreate(
+        coap_server_task,
+        "coap_server",
+        8192,
+        NULL,
+        5,
+        NULL
+    );
+
+
+    ESP_LOGI(TAG,
+             "Application started");
 }
