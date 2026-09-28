@@ -1,14 +1,24 @@
-/* ESP32-C3 Light Example
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
+/*
+ * ESP32 Smart Light Example - TCP Socket Server & Client (Mục 8.3.1)
+ *
+ * Modernized for ESP-IDF v6.0.2 & GCC 15
+ * Features:
+ * - Dual-Target Support (ESP32-S3 GPIO 0 / ESP32-C3 GPIO 9, WS2812B GPIO 4)
+ * - TCP Socket Server (Default Port 3333):
+ *     TCP Keep-Alive: SO_KEEPALIVE, TCP_KEEPIDLE=5s, TCP_KEEPINTVL=3s, TCP_KEEPCNT=3
+ *     Commands supported:
+ *       - "Open the light"  / "ON"  -> Turn ON LED strip
+ *       - "Close the light" / "OFF" -> Turn OFF LED strip
+ *       - "Toggle"                  -> Toggle ON/OFF state
+ *       - "Color"                   -> Cycle through 5 color presets
+ *       - "Status"                  -> Query current state, brightness, and color
+ * - Robust Wi-Fi Station Engine with WPA2/WPA3 Personal, PMF, VN Country Code
+ */
 
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
+#include <inttypes.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,6 +28,7 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "nvs_flash.h"
 
 #include "lwip/sockets.h"
@@ -27,22 +38,37 @@
 #include "app_storage.h"
 #include "app_priv.h"
 
-#define LIGHT_TCP_CLIENT        1
-#define LIGHT_ESP_WIFI_SSID     "YOUR-SSID"
-#define LIGHT_ESP_WIFI_PASS     "YOUR-PASS"
-#define LIGHT_ESP_MAXIMUM_RETRY 5
-#define HOST_IP                 "192.168.3.80"
-#define PORT                    3333
+#include DEVELOPMENT_BOARD
 
-/* The event group allows multiple bits for each event, but we only care about two events:
- * - we are connected to the AP with an IP
- * - we failed to connect after the maximum amount of retries */
+#define TAG "tcp_socket"
+
+#ifndef CONFIG_TCP_WIFI_SSID
+#define CONFIG_TCP_WIFI_SSID "Minh Toan"
+#endif
+
+#ifndef CONFIG_TCP_WIFI_PASSWORD
+#define CONFIG_TCP_WIFI_PASSWORD "21012004"
+#endif
+
+#ifndef CONFIG_TCP_MAX_RETRY
+#define CONFIG_TCP_MAX_RETRY 10
+#endif
+
+#ifndef CONFIG_TCP_PORT
+#define CONFIG_TCP_PORT 3333
+#endif
+
+#ifndef CONFIG_TCP_IS_CLIENT
+#define CONFIG_TCP_IS_CLIENT 0
+#endif
+
+#ifndef CONFIG_TCP_SERVER_HOST
+#define CONFIG_TCP_SERVER_HOST "192.168.1.100"
+#endif
+
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
-static const char *TAG = "tcp socket";
-
-/* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group = NULL;
 static int s_retry_num = 0;
 
@@ -50,20 +76,26 @@ static void event_handler(void *arg, esp_event_base_t event_base,
                           int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        ESP_LOGI(TAG, "==> [Wi-Fi] Bắt đầu kết nối tới AP SSID: %s...", CONFIG_TCP_WIFI_SSID);
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_num < LIGHT_ESP_MAXIMUM_RETRY) {
+        s_retry_num++;
+        ESP_LOGW(TAG, "==> [Wi-Fi] Kết nối thất bại lần [%d/%d]! Đang thử lại...",
+                 s_retry_num, CONFIG_TCP_MAX_RETRY);
+        if (s_retry_num < CONFIG_TCP_MAX_RETRY) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
             esp_wifi_connect();
-            s_retry_num++;
-            ESP_LOGI(TAG, "retry to connect to the AP");
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
-        ESP_LOGI(TAG, "connect to the AP fail");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         s_retry_num = 0;
+        ESP_LOGI(TAG, "==========================================================");
+        ESP_LOGI(TAG, "==> [Wi-Fi] KẾT NỐI THÀNH CÔNG! ĐÃ CÓ ĐỊA CHỈ IP:        ");
+        ESP_LOGI(TAG, "  - Địa chỉ IP cấp : " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "  - TCP Server Port: %d", CONFIG_TCP_PORT);
+        ESP_LOGI(TAG, "==========================================================");
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
@@ -71,228 +103,304 @@ static void event_handler(void *arg, esp_event_base_t event_base,
 static void wifi_initialize(void)
 {
     s_wifi_event_group = xEventGroupCreate();
-
-    /* Initialize TCP/IP */
     ESP_ERROR_CHECK(esp_netif_init());
-
-    /* Initialize the event loop */
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    /* Initialize Wi-Fi including netif with default config */
     esp_netif_create_default_wifi_sta();
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    /* Register our event handler for Wi-Fi and IP related events */
+    wifi_country_t country = {
+        .cc = "VN",
+        .schan = 1,
+        .nchan = 13,
+        .policy = WIFI_COUNTRY_POLICY_AUTO,
+    };
+    esp_wifi_set_country(&country);
+
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 }
 
-static void wifi_station_initialize(void)
+static bool wifi_station_connect(void)
 {
-    /* Start Wi-Fi in station mode */
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = LIGHT_ESP_WIFI_SSID,
-            .password = LIGHT_ESP_WIFI_PASS,
-            /* Setting a password implies station will connect to all security modes including WEP/WPA.
-             * However these modes are deprecated and not advisable to be used. Incase your Access point
-             * doesn't support WPA2, these mode can be enabled by commenting below line */
-            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
-
+            .ssid = CONFIG_TCP_WIFI_SSID,
+            .password = CONFIG_TCP_WIFI_PASSWORD,
+            .threshold.authmode = WIFI_AUTH_OPEN,
             .pmf_cfg = {
                 .capable = true,
                 .required = false
             },
         },
     };
+
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "wifi_station_initialize finished.");
+    esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW20);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_max_tx_power(48);
 
-    /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
-     * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                           pdFALSE, pdFALSE, portMAX_DELAY);
 
-    /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-     * happened. */
     if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "connected to ap SSID:%s password:%s", LIGHT_ESP_WIFI_SSID, LIGHT_ESP_WIFI_PASS);
-    } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s", LIGHT_ESP_WIFI_SSID, LIGHT_ESP_WIFI_PASS);
-    } else {
-        ESP_LOGE(TAG, "UNEXPECTED EVENT");
+        return true;
+    }
+    ESP_LOGE(TAG, "Không thể kết nối tới AP SSID: %s!", CONFIG_TCP_WIFI_SSID);
+    return false;
+}
+
+/**
+ * @brief Chuyển chuỗi sang chữ thường và loại bỏ ký tự khoảng trắng / xuống dòng ở đuôi
+ */
+static void trim_and_lower(char *str)
+{
+    int len = strlen(str);
+    while (len > 0 && (str[len - 1] == '\r' || str[len - 1] == '\n' || isspace((unsigned char)str[len - 1]))) {
+        str[--len] = '\0';
+    }
+    for (int i = 0; i < len; i++) {
+        str[i] = (char)tolower((unsigned char)str[i]);
     }
 }
 
-static esp_err_t esp_create_tcp_server(void)
+/**
+ * @brief Xử lý lệnh nhận được từ TCP Client và chuẩn bị chuỗi phản hồi
+ */
+static void handle_tcp_command(const char *raw_cmd, char *response_buf, size_t max_resp_len)
 {
-   int len;
-   int keepAlive = 1;
-   int keepIdle = 5;
-   int keepInterval = 5;
-   int keepCount = 3;
-   char rx_buffer[128] = {0};
-   char addr_str[32] = {0};
-   esp_err_t err = ESP_FAIL;
-   struct sockaddr_in server_addr;
+    char cmd[128];
+    strncpy(cmd, raw_cmd, sizeof(cmd) - 1);
+    cmd[sizeof(cmd) - 1] = '\0';
+    trim_and_lower(cmd);
 
-   // 创建 TCP 套接字
-   int listenfd = socket(AF_INET, SOCK_STREAM, 0);
-   if (listenfd < 0) {
-      ESP_LOGE(TAG, "create socket error");
-      return err;
-   }
+    ESP_LOGI(TAG, "[TCP CMD] Phân tích lệnh: \"%s\"", cmd);
 
-   ESP_LOGI(TAG, "create socket success, listenfd : %d", listenfd);
-
-   // 启用 SO_REUSEADDR 选项， 允许服务器绑定当前已经存在已建立连接的地址
-   int opt = 1;
-   int ret = setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-   if (ret < 0) {
-      ESP_LOGE(TAG, "Failed to set SO_REUSEADDR. Error %d", errno);
-      goto exit;
-   }
-
-   // 服务器绑定 IP 全 0，端口 3333 的接口
-   server_addr.sin_family = AF_INET;
-   server_addr.sin_addr.s_addr = INADDR_ANY;
-   server_addr.sin_port = htons(PORT);
-   ret = bind(listenfd, (struct sockaddr *) &server_addr, sizeof(server_addr));
-   if (ret < 0) {
-      ESP_LOGE(TAG, "bind socket failed, socketfd : %d, errno : %d", listenfd, errno);
-      goto exit;
-   }
-   ESP_LOGI(TAG, "bind socket success");
-
-   ret = listen(listenfd, 1);
-   if (ret < 0) {
-      ESP_LOGE(TAG, "listen socket failed, socketfd : %d, errno : %d", listenfd, errno);
-      goto exit;
-   }
-   ESP_LOGI(TAG, "listen socket success");
-
-   while (1) {
-      struct sockaddr_in source_addr;
-      socklen_t addr_len = sizeof(source_addr);
-      // 等待新的 TCP 连接建立成功，并返回与对端通信的套接字
-      int sock = accept(listenfd, (struct sockaddr *)&source_addr, &addr_len);
-      if (sock < 0) {
-         ESP_LOGE(TAG, "Unable to accept connection: errno %d", errno);
-         break;
-      }
-
-      // 启动 TCP 保活 功能，防止僵尸客户端
-      setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(int));
-      setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &keepIdle, sizeof(int));
-      setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(int));
-      setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(int));
-
-      if (source_addr.sin_family == PF_INET) {
-         inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
-      }
-
-      ESP_LOGI(TAG, "Socket accepted ip address: %s", addr_str);
-
-      do {
-         len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
-         if (len < 0) {
-            ESP_LOGE(TAG, "Error occurred during receiving: errno %d", errno);
-         } else if (len == 0) {
-            ESP_LOGW(TAG, "Connection closed");
-         } else {
-            rx_buffer[len] = 0;
-            ESP_LOGI(TAG, "Received %d bytes: %s", len, rx_buffer);
-         }
-      } while (len > 0);
-
-      shutdown(sock, 0);
-      close(sock);
-   }
-exit:
-   close(listenfd);
-   return err;
+    if (strstr(cmd, "open the light") != NULL || strcmp(cmd, "on") == 0 || strcmp(cmd, "turn on") == 0) {
+        app_driver_set_state(true);
+        snprintf(response_buf, max_resp_len,
+                 "+OK: Light is ON | Brightness: %u%% | Color: %s\r\n",
+                 app_driver_get_brightness(), app_driver_get_color_name());
+    } else if (strstr(cmd, "close the light") != NULL || strcmp(cmd, "off") == 0 || strcmp(cmd, "turn off") == 0) {
+        app_driver_set_state(false);
+        snprintf(response_buf, max_resp_len, "+OK: Light is OFF\r\n");
+    } else if (strcmp(cmd, "toggle") == 0) {
+        app_driver_toggle_state();
+        snprintf(response_buf, max_resp_len,
+                 "+OK: Light toggled -> State is %s\r\n",
+                 app_driver_get_state() ? "ON" : "OFF");
+    } else if (strcmp(cmd, "color") == 0 || strcmp(cmd, "next") == 0) {
+        app_driver_next_color();
+        snprintf(response_buf, max_resp_len,
+                 "+OK: Switched color to %s\r\n",
+                 app_driver_get_color_name());
+    } else if (strcmp(cmd, "status") == 0 || strcmp(cmd, "get") == 0) {
+        snprintf(response_buf, max_resp_len,
+                 "+OK: State=%s, Brightness=%u%%, Color=%s\r\n",
+                 app_driver_get_state() ? "ON" : "OFF",
+                 app_driver_get_brightness(),
+                 app_driver_get_color_name());
+    } else {
+        snprintf(response_buf, max_resp_len,
+                 "-ERR: Unknown command '%s'. Supported: 'Open the light', 'Close the light', 'Toggle', 'Color', 'Status'\r\n",
+                 raw_cmd);
+    }
 }
 
-static esp_err_t esp_create_tcp_client(void)
+/**
+ * @brief Nhiệm vụ TCP Server nền (Receiver / Smart Light Device)
+ */
+static void tcp_server_task(void *pvParameters)
 {
-   esp_err_t err = ESP_FAIL;
-   char *payload = "Open the light";
-   struct sockaddr_in dest_addr;
-   dest_addr.sin_addr.s_addr = inet_addr(HOST_IP);
-   dest_addr.sin_family = AF_INET;
-   dest_addr.sin_port = htons(PORT);
+    char rx_buffer[256];
+    char resp_buffer[256];
+    int opt = 1;
 
-   // 创建 TCP 套接字
-   int sock =  socket(AF_INET, SOCK_STREAM, 0);
-   if (sock < 0) {
-      ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
-      return err;
-   }
-   ESP_LOGI(TAG, "Socket created, connecting to %s:%d", HOST_IP, PORT);
+    while (1) {
+        int listenfd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+        if (listenfd < 0) {
+            ESP_LOGE(TAG, "Không thể tạo TCP listen socket: errno %d", errno);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            continue;
+        }
 
-   // 连接 TCP 服务器
-   int ret = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-   if (ret != 0) {
-      ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
-      close(sock);
-      return err;
-   }
-   ESP_LOGI(TAG, "Successfully connected");
+        // Kích hoạt SO_REUSEADDR
+        setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-   // 发送 TCP 数据
-   ret = send(sock, payload, strlen(payload), 0);
-   if (ret < 0) {
-      ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
-      goto exit;
-   }
-   err = ESP_OK;
+        struct sockaddr_in server_addr = {
+            .sin_family = AF_INET,
+            .sin_addr.s_addr = htonl(INADDR_ANY),
+            .sin_port = htons(CONFIG_TCP_PORT),
+        };
 
-exit:
-   shutdown(sock, 0);
-   close(sock);
-   return err;
+        int err = bind(listenfd, (struct sockaddr *)&server_addr, sizeof(server_addr));
+        if (err < 0) {
+            ESP_LOGE(TAG, "Lỗi bind socket tới cổng %d: errno %d", CONFIG_TCP_PORT, errno);
+            close(listenfd);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            continue;
+        }
+
+        err = listen(listenfd, 2);
+        if (err < 0) {
+            ESP_LOGE(TAG, "Lỗi listen socket: errno %d", errno);
+            close(listenfd);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            continue;
+        }
+
+        ESP_LOGI(TAG, "TCP Server đã sẵn sàng lắng nghe kết nối tại cổng %d", CONFIG_TCP_PORT);
+
+        while (1) {
+            struct sockaddr_in source_addr;
+            socklen_t addr_len = sizeof(source_addr);
+            int sock = accept(listenfd, (struct sockaddr *)&source_addr, &addr_len);
+            if (sock < 0) {
+                ESP_LOGE(TAG, "Lỗi accept kết nối: errno %d", errno);
+                break;
+            }
+
+            // Kích hoạt tính năng TCP Keep-Alive để tự động dọn dẹp Zombie Client
+            int keep_alive = 1;
+            int keep_idle = 5;      // 5 giây không có dữ liệu sẽ bắt đầu gửi probe
+            int keep_interval = 3;  // Gửi lại probe mỗi 3 giây
+            int keep_count = 3;     // Quá 3 lần không phản hồi sẽ đóng kết nối
+            setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keep_alive, sizeof(int));
+            setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &keep_idle, sizeof(int));
+            setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &keep_interval, sizeof(int));
+            setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keep_count, sizeof(int));
+
+            char client_ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &source_addr.sin_addr, client_ip, sizeof(client_ip));
+            uint16_t client_port = ntohs(source_addr.sin_port);
+
+            ESP_LOGI(TAG, "==> [TCP CONNECT] Chấp nhận kết nối từ Client: %s:%d", client_ip, client_port);
+
+            // Gửi banner chào mừng
+            const char *welcome = "Welcome to PBL5 Smart Light TCP Server!\r\nType 'Open the light' or 'Status'\r\n";
+            send(sock, welcome, strlen(welcome), 0);
+
+            while (1) {
+                int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+                if (len < 0) {
+                    ESP_LOGW(TAG, "Lỗi đọc socket hoặc mất kết nối: errno %d", errno);
+                    break;
+                } else if (len == 0) {
+                    ESP_LOGI(TAG, "Client %s:%d đã đóng kết nối (FIN)", client_ip, client_port);
+                    break;
+                }
+
+                rx_buffer[len] = '\0';
+                ESP_LOGI(TAG, "Nhận %d bytes từ %s:%d: \"%s\"", len, client_ip, client_port, rx_buffer);
+
+                // Xử lý lệnh điều khiển
+                handle_tcp_command(rx_buffer, resp_buffer, sizeof(resp_buffer));
+
+                // Phản hồi kết quả cho Client
+                int sent = send(sock, resp_buffer, strlen(resp_buffer), 0);
+                if (sent < 0) {
+                    ESP_LOGE(TAG, "Gửi phản hồi thất bại: errno %d", errno);
+                    break;
+                }
+            }
+
+            shutdown(sock, 0);
+            close(sock);
+            ESP_LOGI(TAG, "Đã đóng kết nối client %s:%d", client_ip, client_port);
+        }
+
+        close(listenfd);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+    vTaskDelete(NULL);
 }
 
-void app_main()
+/**
+ * @brief Nhiệm vụ TCP Client kiểm thử gửi lệnh tới server từ xa
+ */
+static void tcp_client_task(void *pvParameters)
 {
-    int i = 0;
-    ESP_LOGE(TAG, "app_main");
+    char rx_buffer[128];
+    const char *payload = "Open the light\n";
 
-    /**
-     * @brief NVS Flash initialization
-     */
-    ESP_LOGI(TAG, "NVS Flash initialization");
+    while (1) {
+        int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+        if (sock < 0) {
+            ESP_LOGE(TAG, "[TCP CLIENT] Không thể tạo socket: errno %d", errno);
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            continue;
+        }
+
+        struct sockaddr_in dest_addr = {
+            .sin_family = AF_INET,
+            .sin_port = htons(CONFIG_TCP_PORT),
+        };
+        inet_aton(CONFIG_TCP_SERVER_HOST, &dest_addr.sin_addr.s_addr);
+
+        ESP_LOGI(TAG, "[TCP CLIENT] Đang kết nối tới %s:%d...", CONFIG_TCP_SERVER_HOST, CONFIG_TCP_PORT);
+        if (connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr)) != 0) {
+            ESP_LOGW(TAG, "[TCP CLIENT] Kết nối thất bại: errno %d", errno);
+            close(sock);
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            continue;
+        }
+
+        ESP_LOGI(TAG, "[TCP CLIENT] Kết nối thành công! Đang gửi: \"%s\"", payload);
+        send(sock, payload, strlen(payload), 0);
+
+        int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+        if (len > 0) {
+            rx_buffer[len] = '\0';
+            ESP_LOGI(TAG, "[TCP CLIENT] Nhận phản hồi: \"%s\"", rx_buffer);
+        }
+
+        shutdown(sock, 0);
+        close(sock);
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+
+    vTaskDelete(NULL);
+}
+
+void app_main(void)
+{
+    ESP_LOGI(TAG, "==========================================================");
+    ESP_LOGI(TAG, "    PBL5 Smart Light - Mục 8.3.1: TCP Socket Server/Client");
+    ESP_LOGI(TAG, "    TCP Port         : %d", CONFIG_TCP_PORT);
+    ESP_LOGI(TAG, "    Keep-Alive       : Idle=5s, Intvl=3s, Probes=3");
+    ESP_LOGI(TAG, "    WS2812B Hardware SPI2 DMA @ 3.2MHz | GPIO %d", LIGHT_GPIO_WS2812);
+    ESP_LOGI(TAG, "    Boot Button HAL  : GPIO %d (Active Level %d)", LIGHT_BUTTON_GPIO, LIGHT_BUTTON_ACTIVE_LEVEL);
+    ESP_LOGI(TAG, "==========================================================");
+
+    // 1. Khởi tạo NVS Storage
     app_storage_init();
 
-    /**
-     * @brief Application driver initialization
-     */
-    ESP_LOGI(TAG, "Application driver initialization");
+    // 2. Khởi tạo Application Driver & WS2812B LED HAL
     app_driver_init();
 
-    /**
-     * @brief Wi-Fi initialization
-     */
-    ESP_LOGI(TAG, "Wi-Fi initialization");
+    // 3. Khởi tạo Wi-Fi TCP/IP Stack & Kết nối AP
     wifi_initialize();
+    if (!wifi_station_connect()) {
+        ESP_LOGE(TAG, "Dừng khởi tạo ứng dụng do Wi-Fi thất bại.");
+        return;
+    }
 
-    /**
-     * @brief Wi-Fi Station initialization
-     */
-    ESP_LOGI(TAG, "Wi-Fi Station initialization");
-    wifi_station_initialize();
-
-#if LIGHT_TCP_CLIENT
-    esp_create_tcp_client();
+    // 4. Khởi chạy tác vụ TCP
+#if CONFIG_TCP_IS_CLIENT
+    ESP_LOGI(TAG, "Khởi chạy chế độ: TCP CLIENT");
+    xTaskCreate(tcp_client_task, "tcp_client_task", 4096, NULL, 5, NULL);
 #else
-    esp_create_tcp_server();
+    ESP_LOGI(TAG, "Khởi chạy chế độ: TCP SERVER (Smart Light Device)");
+    xTaskCreate(tcp_server_task, "tcp_server_task", 4096, NULL, 5, NULL);
 #endif
 
     while (1) {
-        ESP_LOGI(TAG, "[%02d] Hello world!", i++);
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(30000));
     }
 }

@@ -53,7 +53,7 @@
             "path": "test_case/coap"
         },
         {
-            "name": "🧪 [TC] mqtt_tcp",
+            "name": "🧪 [TC] 9 - mqtt_tcp",
             "path": "test_case/mqtt_tcp"
         },
         {

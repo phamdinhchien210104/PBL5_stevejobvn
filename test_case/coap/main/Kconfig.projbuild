@@ -1,0 +1,39 @@
+menu "CoAP Configuration"
+
+    config COAP_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "Minh Toan"
+        help
+            SSID of the Access Point to connect to for CoAP.
+
+    config COAP_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "21012004"
+        help
+            Password of the Access Point to connect to.
+
+    config COAP_MAX_RETRY
+        int "Maximum Wi-Fi Connection Retries"
+        default 10
+        help
+            Number of retries before reporting Wi-Fi connection failure.
+
+    config COAP_PORT
+        int "CoAP UDP Port"
+        default 5683
+        help
+            Standard port for CoAP over UDP (default: 5683).
+
+    config COAP_DTLS_PORT
+        int "CoAPS DTLS Port"
+        default 5684
+        help
+            Standard port for CoAP over DTLS (default: 5684).
+
+    config COAP_PSK_KEY
+        string "CoAPS DTLS Pre-Shared Key (PSK)"
+        default "esp32c3_key"
+        help
+            Pre-shared key used for secure CoAPS communication.
+
+endmenu
