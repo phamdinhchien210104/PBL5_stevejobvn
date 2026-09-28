@@ -67,7 +67,7 @@ I (1480) coap_server: CoAP Server đã sẵn sàng phục vụ!
 #### Cách 1: Chạy Script Python Thuần (Không cần cài thư viện ngoài)
 Chạy script có sẵn trong dự án:
 ```bash
-python test_case/coap/scripts/test_coap.py 192.168.1.45
+python scripts/test_coap.py 192.168.1.45
 ```
 Kết quả hiển thị:
 ```text

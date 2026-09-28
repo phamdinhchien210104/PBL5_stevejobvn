@@ -1,0 +1,39 @@
+menu "mDNS Discovery Configuration"
+
+    config MDNS_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "Minh Toan"
+        help
+            SSID of the Access Point to connect to for mDNS Discovery.
+
+    config MDNS_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "21012004"
+        help
+            Password of the Access Point to connect to.
+
+    config MDNS_MAX_RETRY
+        int "Maximum Wi-Fi Connection Retries"
+        default 10
+        help
+            Number of retries before reporting Wi-Fi connection failure.
+
+    config MDNS_HOSTNAME
+        string "mDNS Hostname"
+        default "my_smart_light"
+        help
+            Hostname for local resolution (e.g., my_smart_light -> my_smart_light.local).
+
+    config MDNS_INSTANCE_NAME
+        string "mDNS Instance Name"
+        default "esp32c3_smart_light"
+        help
+            Friendly service instance name advertised across the local network.
+
+    config MDNS_SERVICE_PORT
+        int "mDNS Advertised HTTP Port"
+        default 80
+        help
+            Port number advertised for the _http._tcp service.
+
+endmenu

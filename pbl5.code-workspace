@@ -29,48 +29,48 @@
             "path": "device_firmware/7_insights"
         },
         {
-            "name": "🧪 [TC] 8.5.1 & 8.5.2 - local_control",
-            "path": "test_case/local_control"
-        },
-        {
-            "name": "🧪 [TC] 11 - advanced_https_ota",
-            "path": "test_case/advanced_https_ota"
-        },
-        {
-            "name": "🧪 [TC] https_server",
-            "path": "test_case/https_server"
-        },
-        {
-            "name": "🧪 [TC] 8.5.3 - gatt_server",
-            "path": "test_case/gatt_server"
-        },
-        {
-            "name": "🧪 [TC] mdns_discovery",
-            "path": "test_case/mdns_discovery"
-        },
-        {
-            "name": "🧪 [TC] coap",
-            "path": "test_case/coap"
-        },
-        {
-            "name": "🧪 [TC] 9 - mqtt_tcp",
-            "path": "test_case/mqtt_tcp"
-        },
-        {
-            "name": "🧪 [TC] broadcast_discovery",
+            "name": "🧪 [TC] 8.2.1 - broadcast_discovery",
             "path": "test_case/broadcast_discovery"
         },
         {
-            "name": "🧪 [TC] multicast_discovery",
+            "name": "🧪 [TC] 8.2.2, 8.2.3 - multicast_discovery",
             "path": "test_case/multicast_discovery"
         },
         {
-            "name": "🧪 [TC] tcp_socket",
+            "name": "🧪 [TC] 8.2.4 - mdns_discovery",
+            "path": "test_case/mdns_discovery"
+        },
+        {
+            "name": "🧪 [TC] 8.3.1 - tcp_socket",
             "path": "test_case/tcp_socket"
         },
         {
-            "name": "🧪 [TC] udp_socket",
+            "name": "🧪 [TC] 8.3.2, 8.4.1 - https_server",
+            "path": "test_case/https_server"
+        },
+        {
+            "name": "🧪 [TC] 8.3.3 - udp_socket",
             "path": "test_case/udp_socket"
+        },
+        {
+            "name": "🧪 [TC] 8.3.4, 8.4.2 - coap",
+            "path": "test_case/coap"
+        },
+        {
+            "name": "🧪 [TC] 8.3.5, 8.5.3 - gatt_server",
+            "path": "test_case/gatt_server"
+        },
+        {
+            "name": "🧪 [TC] 8.5.1, 8.5.2 - local_control",
+            "path": "test_case/local_control"
+        },
+        {
+            "name": "🧪 [TC] 9.2 - mqtt_tcp",
+            "path": "test_case/mqtt_tcp"
+        },
+        {
+            "name": "🧪 [TC] 11.3.1 - advanced_https_ota",
+            "path": "test_case/advanced_https_ota"
         },
         {
             "name": "📁 [Root] Repository",

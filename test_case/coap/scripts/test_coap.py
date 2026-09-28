@@ -10,6 +10,10 @@ import socket
 import sys
 import time
 
+# Đảm bảo in tiếng Việt an toàn trên Windows console
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 COAP_DEFAULT_PORT = 5683
 
 

@@ -1,0 +1,47 @@
+menu "Multicast Discovery Configuration"
+
+    config MULTICAST_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "Minh Toan"
+        help
+            SSID of the Access Point to connect to for Multicast Discovery.
+
+    config MULTICAST_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "21012004"
+        help
+            Password of the Access Point to connect to.
+
+    config MULTICAST_MAX_RETRY
+        int "Maximum Wi-Fi Connection Retries"
+        default 10
+        help
+            Number of retries before reporting Wi-Fi connection failure.
+
+    config MULTICAST_IPV4_ADDR
+        string "Multicast IPv4 Group Address"
+        default "232.10.11.12"
+        help
+            Class D Multicast group address (e.g., 232.10.11.12 or 239.255.255.250).
+
+    config MULTICAST_PORT
+        int "UDP Multicast Discovery Port"
+        default 3333
+        help
+            UDP port used for multicast communication (default: 3333).
+
+    config MULTICAST_TTL
+        int "Multicast Packet TTL (Time to Live)"
+        default 1
+        range 1 255
+        help
+            IP_MULTICAST_TTL value. 1 restricts packets to the local subnet.
+
+    config MULTICAST_IS_CLIENT
+        bool "Run as Multicast Client/Sender (Default is Device/Receiver)"
+        default n
+        help
+            When enabled, sends multicast query packets to discover lights.
+            When disabled (default), listens and joins group as Smart Light device.
+
+endmenu

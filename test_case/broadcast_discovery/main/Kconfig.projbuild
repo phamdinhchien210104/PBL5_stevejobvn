@@ -1,0 +1,34 @@
+menu "Broadcast Discovery Configuration"
+
+    config BROADCAST_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "Minh Toan"
+        help
+            SSID of the Access Point to connect to for Broadcast Discovery.
+
+    config BROADCAST_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "21012004"
+        help
+            Password of the Access Point to connect to.
+
+    config BROADCAST_MAX_RETRY
+        int "Maximum Wi-Fi Connection Retries"
+        default 10
+        help
+            Number of retries before reporting Wi-Fi connection failure.
+
+    config BROADCAST_PORT
+        int "UDP Broadcast Discovery Port"
+        default 3333
+        help
+            UDP port used for broadcasting and listening.
+
+    config BROADCAST_IS_CLIENT
+        bool "Run as Discovery Client/Sender (Default is Device/Receiver)"
+        default n
+        help
+            When enabled, sends broadcast query packet to discover lights.
+            When disabled (default), listens on port 3333 as the Smart Light device.
+
+endmenu

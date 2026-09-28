@@ -71,6 +71,6 @@ echo "Close the light" | nc -u -w1 192.168.1.45 3333
 
 #### Cách 2: Chạy Script Python Tự Động
 ```bash
-python test_case/udp_socket/scripts/test_udp_socket.py 192.168.1.45
+python scripts/test_udp_socket.py 192.168.1.45
 ```
 Kịch bản Python sẽ gửi chuỗi 5 lệnh và xác nhận gói tin ACK phản hồi từ đèn.

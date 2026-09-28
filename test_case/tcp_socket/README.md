@@ -72,6 +72,6 @@ Sau đó gõ các lệnh:
 
 #### Cách 2: Chạy Script Python Tự Động
 ```bash
-python test_case/tcp_socket/scripts/test_tcp_socket.py 192.168.1.45
+python scripts/test_tcp_socket.py 192.168.1.45
 ```
 Kịch bản Python sẽ tự động bắt tay TCP, lần lượt gửi 5 lệnh kiểm thử và kiểm tra kết quả phản hồi từ ESP32.
