@@ -26,15 +26,21 @@ def test_multicast(group=MULTICAST_GROUP, port=MULTICAST_PORT):
     print(f"  Bản tin truy vấn: '{QUERY_MESSAGE.decode()}'")
     print("=" * 68)
 
-    # Tự động phát hiện IP của card Wi-Fi đang kết nối mạng LAN
+    # Tự động phát hiện IP của card Wi-Fi đang kết nối mạng
     def get_lan_ip():
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("192.168.1.1", 80))
+            s.connect(("8.8.8.8", 80))
             ip = s.getsockname()[0]
             s.close()
             return ip
         except Exception:
+            try:
+                for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+                    if not ip.startswith(("127.", "192.168.81.", "192.168.222.", "172.29.")):
+                        return ip
+            except Exception:
+                pass
             return "0.0.0.0"
 
     local_ip = get_lan_ip()
@@ -69,17 +75,7 @@ def test_multicast(group=MULTICAST_GROUP, port=MULTICAST_PORT):
         print("    Nguyên nhân thực tế:")
         print("    1. Router Wi-Fi đang bật tính năng 'Wireless Client Isolation' (chặn Multicast giữa 2 thiết bị Wi-Fi).")
         print("    2. Router không hỗ trợ hoặc chặn dải Source-Specific Multicast (232.0.0.0/8).")
-        print("    -> Đang thử nghiệm gửi kiểm tra trực tiếp (Unicast Discovery) tới cổng 3333...")
-        try:
-            # Fallback test direct unicast to common ESP32 IP
-            target_ip = "192.168.1.31"
-            sock.sendto(QUERY_MESSAGE, (target_ip, port))
-            data, addr = sock.recvfrom(1024)
-            print(f"    ==> [KẾT QUẢ]: Thiết bị ESP32 tại {addr[0]} đang HOẠT ĐỘNG TỐT!")
-            print(f"        Dữ liệu nhận: '{data.decode('utf-8', errors='ignore')}'")
-            print("        => Xác nhận: Firmware ESP32 chạy đúng 100%, nguyên nhân Multicast bị chặn là do Router Wi-Fi!")
-        except Exception:
-            print("        Không thể kết nối trực tiếp.")
+        print("    -> Khuyên dùng: Thử kết nối cả PC và ESP32 vào Mobile Hotspot (Điểm phát sóng di động) để kiểm thử.")
     except Exception as e:
         print(f"\n==> [LỖI]: {e}")
     finally:
