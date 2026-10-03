@@ -73,17 +73,31 @@ static const char *s_color_names[] = {
 
 int app_driver_next_color(void)
 {
+    /* Đảm bảo dừng mọi hiệu ứng breathing/blink nếu đang chạy */
+    light_driver_breath_stop();
+    light_driver_blink_stop();
+
     if (!g_output_state) {
         g_output_state = true;
         light_driver_set_switch(true);
     }
+
+    /* Đảm bảo độ sáng tối thiểu 40% để người dùng nhìn thấy rõ sự đổi màu */
+    if (s_current_brightness < 40) {
+        s_current_brightness = 50;
+        light_driver_set_brightness(s_current_brightness);
+    }
+
     s_color_index = (s_color_index + 1) % NUM_COLORS;
     uint8_t r = s_colors[s_color_index][0];
     uint8_t g = s_colors[s_color_index][1];
     uint8_t b = s_colors[s_color_index][2];
-    ESP_LOGI(TAG, "==> [Next Color] Đổi màu [%d/%d] (%s) -> R=%d, G=%d, B=%d",
-             s_color_index + 1, (int)NUM_COLORS, s_color_names[s_color_index], r, g, b);
-    return light_driver_set_rgb(r, g, b);
+    ESP_LOGI(TAG, "==> [Next Color] Đổi màu [%d/%d] (%s) -> R=%d, G=%d, B=%d (Độ sáng: %d%%)",
+             s_color_index + 1, (int)NUM_COLORS, s_color_names[s_color_index], r, g, b, s_current_brightness);
+    int ret = light_driver_set_rgb(r, g, b);
+    /* Áp dụng lại độ sáng hiện tại để tính toán tỷ lệ ratio cho WS2812B */
+    light_driver_set_brightness(s_current_brightness);
+    return ret;
 }
 
 /**

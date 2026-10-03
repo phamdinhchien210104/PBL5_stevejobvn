@@ -10,11 +10,16 @@ It communicates via the standard esp_local_ctrl Protobuf binary protocol over HT
 implemented natively in pure Python without requiring external pip dependencies.
 
 Usage:
-    python test_case/local_control/scripts/test_local_control.py [--host <IP_OR_MDNS>] [--port <PORT>]
+    python scripts/esp_local_ctrl.py [--host <IP_OR_MDNS>] [--port <PORT>]
 
 Examples:
-    python test_case/local_control/scripts/test_local_control.py --host my_esp_ctrl_device.local
-    python test_case/local_control/scripts/test_local_control.py --host 192.168.1.31
+    # Tự động tìm kiếm qua mDNS / Quét mạng LAN (Không cần truyền bất kỳ tham số nào)
+    python scripts/esp_local_ctrl.py
+
+    # Hoặc truyền hostname / IP trực tiếp nếu muốn
+    python scripts/esp_local_ctrl.py --host my_esp_ctrl_device.local
+    python scripts/esp_local_ctrl.py --host 192.168.1.31
+    python scripts/esp_local_ctrl.py --auto
 """
 
 import argparse
@@ -613,7 +618,7 @@ if __name__ == "__main__":
             print("  Vui lòng kiểm tra:")
             print("  1. Bo mạch ESP32 đã được cấp nguồn và kết nối Wi-Fi chưa?")
             print("  2. Máy tính có đang bật Cloudflare WARP / VPN không (nếu có, hãy tạm dừng)?")
-            print("  3. Hoặc bạn có thể truyền IP cụ thể: python test_local_control.py --host <IP>")
+            print("  3. Hoặc bạn có thể truyền IP cụ thể: python scripts/esp_local_ctrl.py --host <IP>")
             sys.exit(1)
 
     verify = not args.no_verify

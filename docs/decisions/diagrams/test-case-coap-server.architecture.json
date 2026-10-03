@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Architecture: CoAP & CoAPS (DTLS) Embedded Server (test_case/coap)",
+    "output": "test-case-coap-server.html",
+    "quality_profile": "showcase",
+    "animation": "trace",
+    "viewBox": [1280, 520],
+    "views": [
+      {
+        "id": "coap-rest-flow",
+        "label": "CoAP RESTful Interaction (GET & PUT /light)",
+        "focus": ["coap_client", "udp_port", "coap_engine", "resource_light", "app_driver", "light_driver", "target_ws2812"],
+        "note": "Client sends Confirmable (CON) GET or PUT requests to /light on UDP port 5683, receiving 2.05 Content or 2.04 Changed."
+      },
+      {
+        "id": "coaps-dtls-flow",
+        "label": "Secure CoAPS via DTLS PSK (Mục 8.4.2)",
+        "focus": ["dtls_client", "dtls_port", "coap_engine", "resource_light", "app_driver", "light_driver", "target_ws2812"],
+        "note": "Client establishes DTLS 1.2 handshake on port 5684 using Pre-Shared Key (identity: CoAP, key: esp32c3_key) for encrypted control."
+      },
+      {
+        "id": "coap-observe-flow",
+        "label": "CoAP Observable Push Notifications (RFC 7641)",
+        "focus": ["coap_client", "observe_mgr", "resource_light", "app_driver", "boot_button"],
+        "note": "Observers registered on /light are automatically notified with new JSON payloads whenever hardware state changes."
+      },
+      {
+        "id": "hardware-hal-feedback",
+        "label": "Hardware HAL & WS2812B Visual Feedback",
+        "focus": ["boot_button", "app_driver", "light_driver", "target_ws2812"],
+        "note": "Unified app_driver orchestrates WS2812B 8-LED strip via Hardware SPI2 DMA @ 3.2MHz and Boot button multi-gesture interrupts."
+      }
+    ]
+  },
+  "components": [
+    { "id": "coap_client", "type": "frontend", "label": "CoAP Client / Script", "sublabel": "Python test_coap.py", "pos": [40, 110], "size": [140, 60] },
+    { "id": "dtls_client", "type": "security", "label": "CoAPS Client (DTLS)", "sublabel": "PSK Encrypted Client", "pos": [40, 290], "size": [140, 60] },
+    { "id": "udp_port", "type": "backend", "label": "CoAP UDP Endpoint", "sublabel": "Port 5683 (RFC 7252)", "pos": [300, 110], "size": [150, 60] },
+    { "id": "dtls_port", "type": "security", "label": "CoAPS DTLS Endpoint", "sublabel": "Port 5684 (mbedTLS PSK)", "pos": [300, 290], "size": [150, 60] },
+    { "id": "coap_engine", "type": "backend", "label": "libcoap Core Engine", "sublabel": "Context & Event Loop", "pos": [560, 110], "size": [150, 60] },
+    { "id": "resource_light", "type": "database", "label": "Resource '/light'", "sublabel": "GET (2.05) & PUT (2.04)", "pos": [560, 230], "size": [150, 60] },
+    { "id": "observe_mgr", "type": "messagebus", "label": "Observe Manager", "sublabel": "RFC 7641 Auto-Notifier", "pos": [560, 350], "size": [150, 60] },
+    { "id": "app_driver", "type": "backend", "label": "app_driver Core", "sublabel": "State Sync & Visual Pulse", "pos": [820, 230], "size": [150, 60] },
+    { "id": "boot_button", "type": "external", "label": "Boot Button HAL", "sublabel": "GPIO 0 (S3) / GPIO 9 (C3)", "pos": [820, 380], "size": [150, 60] },
+    { "id": "light_driver", "type": "backend", "label": "light_driver Layer", "sublabel": "SPI2 DMA Engine", "pos": [1080, 230], "size": [150, 60] },
+    { "id": "target_ws2812", "type": "external", "label": "WS2812B 8-Bit Strip", "sublabel": "GPIO 4 (Visual Feedback)", "pos": [1080, 380], "size": [150, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Client Controller Domain", "wraps": ["coap_client", "dtls_client"] },
+    { "kind": "region", "label": "LwIP Network Transport & Security", "wraps": ["udp_port", "dtls_port"] },
+    { "kind": "region", "label": "libcoap Protocol & Resource Core", "wraps": ["coap_engine", "resource_light", "observe_mgr"] },
+    { "kind": "region", "label": "Hardware Execution & LED Driver", "wraps": ["app_driver", "boot_button", "light_driver", "target_ws2812"] }
+  ],
+  "connections": [
+    { "id": "client-to-udp", "from": "coap_client", "to": "udp_port", "label": "UDP Datagram", "labelDy": 20, "fromSide": "right", "toSide": "left" },
+    { "id": "client-to-dtls", "from": "dtls_client", "to": "dtls_port", "label": "DTLS Handshake", "labelDy": 20, "variant": "security", "fromSide": "right", "toSide": "left" },
+    { "id": "udp-to-engine", "from": "udp_port", "to": "coap_engine", "label": "CoAP Packet", "labelDy": 20, "fromSide": "right", "toSide": "left" },
+    { "id": "dtls-to-engine", "from": "dtls_port", "to": "resource_light", "label": "Decrypted PDU", "labelDy": 20, "variant": "security", "fromSide": "right", "toSide": "left" },
+    { "id": "engine-to-res", "from": "coap_engine", "to": "resource_light", "label": "Route URI", "labelDy": 20, "fromSide": "bottom", "toSide": "top" },
+    { "id": "res-to-observe", "from": "resource_light", "to": "observe_mgr", "label": "Trigger Notify", "labelDy": 20, "fromSide": "bottom", "toSide": "top" },
+    { "id": "res-to-driver", "from": "resource_light", "to": "app_driver", "label": "Get / Set State", "fromSide": "right", "toSide": "left" },
+    { "id": "driver-to-observe", "from": "app_driver", "to": "observe_mgr", "label": "State Changed", "labelDy": 20, "variant": "dashed", "fromSide": "bottom", "toSide": "right" },
+    { "id": "btn-to-driver", "from": "boot_button", "to": "app_driver", "label": "Click / Hold", "labelDy": -20, "fromSide": "top", "toSide": "bottom" },
+    { "id": "driver-to-light", "from": "app_driver", "to": "light_driver", "label": "Color / Switch", "labelDy": 20, "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "light-to-target", "from": "light_driver", "to": "target_ws2812", "label": "SPI2 DMA @ 3.2MHz", "labelDy": 20, "variant": "emphasis", "fromSide": "bottom", "toSide": "top" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Giao Thức CoAP RESTful Chuẩn Nhúng (Mục 8.3.4)",
+      "items": [
+        "Hoạt động trên UDP cổng 5683 với cấu trúc Header siêu nhẹ 4 bytes.",
+        "Tài nguyên '/light' hỗ trợ GET (đọc JSON trạng thái) và PUT (điều khiển Bật/Tắt/Đổi màu).",
+        "Cơ chế gói tin Confirmable (CON) và Message ID đảm bảo độ tin cậy không mất gói."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Kênh Bảo Mật CoAPS DTLS Pre-Shared Key (Mục 8.4.2)",
+      "items": [
+        "Kích hoạt mã hóa CoAPS trên cổng 5684 dựa trên thư viện mbedTLS.",
+        "Sử dụng Pre-Shared Key (PSK): Identity 'CoAP', Key 'esp32c3_key'.",
+        "Mã hóa toàn bộ Payload nhị phân trên đường truyền, ngăn chặn tấn công MITM."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Mô Hình Observable RFC 7641 & Hardware Execution",
+      "items": [
+        "Cho phép Client đăng ký lắng nghe (Observe) thay đổi trạng thái của bóng đèn.",
+        "Tự động gửi thông báo (Notification) tới Client khi nút bấm vật lý thay đổi màu sắc.",
+        "Tích hợp dải LED WS2812B qua Hardware SPI2 DMA @ 3.2MHz và Nút Boot HAL đa cử chỉ."
+      ]
+    }
+  ]
+}
