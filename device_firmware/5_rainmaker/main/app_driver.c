@@ -42,12 +42,15 @@ extern esp_rmaker_device_t *light_device;
 static const uint16_t s_preset_hues[] = {0, 60, 120, 180, 240, 300};
 #define NUM_PRESET_HUES (sizeof(s_preset_hues) / sizeof(s_preset_hues[0]))
 static size_t s_hue_index = 0;
+static char s_current_effect[16] = "Static";
+
+static void stop_rainbow_task(void);
 
 static void push_btn_cb(void *arg)
 {
     g_output_state = !g_output_state;
     ESP_LOGI(TAG, "==> [Physical Button Click]: Toggling light %s", g_output_state ? "ON" : "OFF");
-    app_driver_set_state(g_output_state);
+    app_light_set_power(g_output_state);
 
     if (light_device) {
         esp_rmaker_param_t *power_param = esp_rmaker_device_get_param_by_name(light_device, ESP_RMAKER_DEF_POWER_NAME);
@@ -145,12 +148,46 @@ static float s_target_sat         = (float)DEFAULT_SATURATION;
 static TimerHandle_t s_smooth_fade_timer = NULL;
 static TimerHandle_t s_lazy_save_timer   = NULL;
 
+/* Helper chuyển đổi HSV sang RGB (0-255) */
+static void hsv_to_rgb(uint16_t h, uint8_t s, uint8_t v, uint8_t *r, uint8_t *g, uint8_t *b);
+
+/* Helper cập nhật màu nền cho hiệu ứng Blink và Breathing tức thì */
+static void update_active_effect_color(void)
+{
+    if (g_output_state) {
+        uint8_t r = 0, g = 0, b = 0;
+        hsv_to_rgb(g_hue, g_saturation, g_brightness, &r, &g, &b);
+        if (r == 0 && g == 0 && b == 0) {
+            r = 0; g = 255; b = 255;
+        }
+
+        if (strcasecmp(s_current_effect, "Blink") == 0) {
+            light_driver_blink_start(r, g, b);
+        } else if (strcasecmp(s_current_effect, "Breathing") == 0) {
+            light_driver_breath_start(r, g, b);
+        }
+    }
+}
+
 /* Timer lưu cấu hình NVS sau khi người dùng dừng thao tác thanh trượt 1.5s (tránh nghẽn Flash) */
 static void lazy_save_timer_cb(TimerHandle_t xTimer)
 {
     ESP_LOGI(TAG, "[Lazy Save] Persisting light state to NVS: H=%d, S=%d, B=%d",
              g_hue, g_saturation, g_brightness);
-    light_driver_set_hsv(g_hue, g_saturation, g_brightness);
+    if (strcasecmp(s_current_effect, "Blink") == 0 ||
+        strcasecmp(s_current_effect, "Breathing") == 0 ||
+        strcasecmp(s_current_effect, "Rainbow") == 0) {
+        /* Đang chạy hiệu ứng: Không gọi light_driver_set_hsv để tránh ngắt hiệu ứng */
+        return;
+    }
+
+    if (g_output_state) {
+        light_driver_set_hsv(g_hue, g_saturation, g_brightness);
+    } else {
+        /* Đèn đang tắt: Chỉ cập nhật cấu hình nội bộ mà không bật sáng phần cứng LED */
+        light_driver_set_hsv(g_hue, g_saturation, g_brightness);
+        light_driver_set_switch(false);
+    }
 }
 
 static void schedule_lazy_save(void)
@@ -162,9 +199,6 @@ static void schedule_lazy_save(void)
         xTimerReset(s_lazy_save_timer, 0);
     }
 }
-
-/* Helper chuyển đổi HSV sang RGB (0-255) */
-static void hsv_to_rgb(uint16_t h, uint8_t s, uint8_t v, uint8_t *r, uint8_t *g, uint8_t *b);
 
 /* Timer nội suy làm mượt (Smooth Fade) chạy 50Hz (20ms/bước) */
 static void smooth_fade_timer_cb(TimerHandle_t xTimer)
@@ -198,6 +232,16 @@ static void smooth_fade_timer_cb(TimerHandle_t xTimer)
         s_current_sat = s_target_sat;
     }
 
+    /* Nếu đang trong hiệu ứng Blink hoặc Breathing, không xuất màu tĩnh đè lên hiệu ứng */
+    if (strcasecmp(s_current_effect, "Blink") == 0 ||
+        strcasecmp(s_current_effect, "Breathing") == 0 ||
+        strcasecmp(s_current_effect, "Rainbow") == 0) {
+        if (!is_busy) {
+            xTimerStop(s_smooth_fade_timer, 0);
+        }
+        return;
+    }
+
     if (g_output_state) {
         uint8_t r = 0, g = 0, b = 0;
         hsv_to_rgb((uint16_t)s_current_hue, (uint8_t)s_current_sat, (uint8_t)s_current_brightness, &r, &g, &b);
@@ -223,8 +267,33 @@ static void trigger_smooth_fade(void)
 esp_err_t app_light_set_power(bool power)
 {
     g_output_state = power;
-    light_driver_set_switch(power);
     ESP_LOGI(TAG, "app_light_set_power: %s", power ? "ON" : "OFF");
+
+    if (!power) {
+        /* POWER OFF: Dừng triệt để tất cả hiệu ứng nền và xóa LED vật lý */
+        stop_rainbow_task();
+        light_driver_blink_stop();
+        light_driver_breath_stop();
+        if (s_smooth_fade_timer != NULL) {
+            xTimerStop(s_smooth_fade_timer, 0);
+        }
+        light_driver_set_switch(false);
+    } else {
+        /* POWER ON: Khôi phục hiệu ứng đã cấu hình hoặc hiển thị màu tĩnh gần nhất */
+        light_driver_set_switch(true);
+        if (strcasecmp(s_current_effect, "Rainbow") == 0 ||
+            strcasecmp(s_current_effect, "Blink") == 0 ||
+            strcasecmp(s_current_effect, "Breathing") == 0) {
+            app_light_set_effect(s_current_effect);
+        } else {
+            /* Hiển thị tĩnh: đồng bộ giá trị float nội suy và kích hoạt fade mượt */
+            s_current_brightness = 0.0f; // Hiệu ứng bừng sáng êm khi vừa bật nguồn
+            s_target_brightness = (float)g_brightness;
+            s_target_hue = (float)g_hue;
+            s_target_sat = (float)g_saturation;
+            trigger_smooth_fade();
+        }
+    }
     return ESP_OK;
 }
 
@@ -238,7 +307,11 @@ esp_err_t app_light_set(uint32_t hue, uint32_t saturation, uint32_t brightness)
     s_target_sat = (float)g_saturation;
     s_target_brightness = (float)g_brightness;
 
-    trigger_smooth_fade();
+    if (strcasecmp(s_current_effect, "Blink") == 0 || strcasecmp(s_current_effect, "Breathing") == 0) {
+        update_active_effect_color();
+    } else {
+        trigger_smooth_fade();
+    }
     schedule_lazy_save();
     return ESP_OK;
 }
@@ -248,8 +321,11 @@ esp_err_t app_light_set_brightness(uint16_t brightness)
     g_brightness = (uint8_t)brightness;
     s_target_brightness = (float)g_brightness;
 
-    /* Kích hoạt chuyển động sáng mờ dần/bừng sáng siêu êm */
-    trigger_smooth_fade();
+    if (strcasecmp(s_current_effect, "Blink") == 0 || strcasecmp(s_current_effect, "Breathing") == 0) {
+        update_active_effect_color();
+    } else {
+        trigger_smooth_fade();
+    }
     schedule_lazy_save();
     return ESP_OK;
 }
@@ -259,7 +335,11 @@ esp_err_t app_light_set_hue(uint16_t hue)
     g_hue = hue;
     s_target_hue = (float)g_hue;
 
-    trigger_smooth_fade();
+    if (strcasecmp(s_current_effect, "Blink") == 0 || strcasecmp(s_current_effect, "Breathing") == 0) {
+        update_active_effect_color();
+    } else {
+        trigger_smooth_fade();
+    }
     schedule_lazy_save();
     return ESP_OK;
 }
@@ -269,7 +349,11 @@ esp_err_t app_light_set_saturation(uint16_t saturation)
     g_saturation = (uint8_t)saturation;
     s_target_sat = (float)g_saturation;
 
-    trigger_smooth_fade();
+    if (strcasecmp(s_current_effect, "Blink") == 0 || strcasecmp(s_current_effect, "Breathing") == 0) {
+        update_active_effect_color();
+    } else {
+        trigger_smooth_fade();
+    }
     schedule_lazy_save();
     return ESP_OK;
 }
@@ -326,14 +410,24 @@ esp_err_t app_light_set_effect(const char *effect)
     if (!effect) return ESP_ERR_INVALID_ARG;
     ESP_LOGI(TAG, "app_light_set_effect: '%s'", effect);
 
+    strncpy(s_current_effect, effect, sizeof(s_current_effect) - 1);
+    s_current_effect[sizeof(s_current_effect) - 1] = '\0';
+
+    stop_rainbow_task();
+
+    /* Nếu đèn đang tắt, chỉ ghi nhận chế độ hiệu ứng cho lần bật sau, không bật phần cứng */
+    if (!g_output_state) {
+        light_driver_blink_stop();
+        light_driver_breath_stop();
+        return ESP_OK;
+    }
+
     uint8_t r = 0, g = 0, b = 0;
     hsv_to_rgb(g_hue, g_saturation, g_brightness, &r, &g, &b);
     if (r == 0 && g == 0 && b == 0) {
         /* Đảm bảo có màu khi bật hiệu ứng */
         r = 0; g = 255; b = 255;
     }
-
-    stop_rainbow_task();
 
     if (strcasecmp(effect, "Blink") == 0) {
         light_driver_breath_stop();

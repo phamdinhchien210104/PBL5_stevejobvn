@@ -87,13 +87,19 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
             continue;
         }
 
-        /* Cập nhật giá trị vào Node Shadow cục bộ mà không bắn MQTT publish lặp đi lặp lại */
-        if (i < count - 1) {
-            esp_rmaker_param_update(param, val);
-        } else {
-            /* Chỉ gửi 1 bản tin báo cáo hoàn tất sau khi toàn bộ tham số đã xử lý xong */
-            esp_rmaker_param_update_and_report(param, val);
-        }
+        /* Cập nhật giá trị vào Node Shadow cục bộ */
+        esp_rmaker_param_update(param, val);
+    }
+
+    /* 
+     * QUAN TRỌNG: Nếu lệnh đến từ Cloud hoặc Local Control (App điện thoại gửi xuống),
+     * Cloud/App đã biết trước giá trị này. Tuyệt đối KHÔNG gọi param_update_and_report
+     * để tránh bắn ngược MQTT publish lên AWS IoT Core khi vuốt nhanh thanh trượt/bảng màu,
+     * dẫn đến cạn kiệt hạn ngạch ("Out of MQTT Budget. Dropping publish message").
+     * Chỉ gọi report khi nguồn thay đổi xuất phát từ nút bấm vật lý / cục bộ trên node.
+     */
+    if (ctx && (ctx->src != ESP_RMAKER_REQ_SRC_CLOUD && ctx->src != ESP_RMAKER_REQ_SRC_LOCAL)) {
+        esp_rmaker_param_update_and_report(write_req[count - 1].param, write_req[count - 1].val);
     }
 
     return ESP_OK;
@@ -109,18 +115,7 @@ static void on_wifi_sta_start(void *arg, esp_event_base_t base, int32_t id, void
     };
     esp_wifi_set_country(&country);
 
-    wifi_config_t conf;
-    if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
-        conf.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
-        conf.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
-        conf.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-        conf.sta.pmf_cfg.capable = false;
-        conf.sta.pmf_cfg.required = false;
-        conf.sta.disable_wpa3_compatible_mode = 1;
-        conf.sta.failure_retry_cnt = 3;
-        esp_wifi_set_config(WIFI_IF_STA, &conf);
-    }
-
+    /* Không gọi esp_wifi_set_config() tại đây vì Wi-Fi STA đã chuyển sang trạng thái Connecting */
     esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW20);
     esp_wifi_set_ps(WIFI_PS_NONE);
     esp_wifi_set_max_tx_power(48); // 12 dBm - chuẩn ổn định cho ESP32-C3 chống sụt áp nguồn RF
