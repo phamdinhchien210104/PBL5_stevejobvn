@@ -1,0 +1,41 @@
+menu "UDP Socket Configuration"
+
+    config UDP_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "Minh Toan"
+        help
+            SSID of the Access Point to connect to for UDP Socket.
+
+    config UDP_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "21012004"
+        help
+            Password of the Access Point to connect to.
+
+    config UDP_MAX_RETRY
+        int "Maximum Wi-Fi Connection Retries"
+        default 10
+        help
+            Number of retries before reporting Wi-Fi connection failure.
+
+    config UDP_PORT
+        int "UDP Server Port"
+        default 3333
+        help
+            Port number for UDP Server to listen on (default: 3333).
+
+    config UDP_IS_CLIENT
+        bool "Run as UDP Client (Default is UDP Server / Smart Light)"
+        default n
+        help
+            When enabled, acts as client sending datagrams to a remote UDP Server.
+            When disabled (default), acts as UDP Server receiving commands.
+
+    config UDP_SERVER_HOST
+        string "Remote UDP Server IP (for Client mode)"
+        default "192.168.1.100"
+        depends on UDP_IS_CLIENT
+        help
+            Remote IPv4 address to send datagrams to when running in client mode.
+
+endmenu

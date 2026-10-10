@@ -1,14 +1,22 @@
-/* ESP32-C3 Light Example
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
+/*
+ * ESP32 Smart Light Example - mDNS Discovery (Mục 8.2.4)
+ *
+ * Modernized for ESP-IDF v6.0.2 & GCC 15
+ * Features:
+ * - Dual-Target Support (ESP32-S3 GPIO 0 / ESP32-C3 GPIO 9, WS2812B GPIO 4)
+ * - mDNS Zero-Config Service Responder (Apple Bonjour / RFC 6762):
+ *     Hostname     : my_smart_light.local
+ *     Instance Name: esp32c3_smart_light (or esp32s3_smart_light)
+ *     Service      : _http._tcp on Port 80
+ *     TXT Records  : board=esp32c3, path=/foobar
+ * - Lightweight HTTP Server on Port 80 to demonstrate end-to-end resolution
+ *     Visual feedback: Pulses Green when accessed via http://my_smart_light.local
+ * - Robust Wi-Fi Station Engine with WPA2/WPA3 Personal, PMF, VN Country Code
+ */
 
 #include <stdio.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,7 +26,9 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "nvs_flash.h"
+#include "mdns.h"
 
 #include "lwip/sockets.h"
 #include "lwip/err.h"
@@ -26,21 +36,42 @@
 
 #include "app_storage.h"
 #include "app_priv.h"
-#include "mdns.h"
 
-#define LIGHT_ESP_WIFI_SSID     "YOUR-SSID"
-#define LIGHT_ESP_WIFI_PASS     "YOUR-PASS"
-#define LIGHT_ESP_MAXIMUM_RETRY 5
+#include DEVELOPMENT_BOARD
 
-/* The event group allows multiple bits for each event, but we only care about two events:
- * - we are connected to the AP with an IP
- * - we failed to connect after the maximum amount of retries */
+#define TAG "mdns_discovery"
+
+#ifndef CONFIG_MDNS_WIFI_SSID
+#define CONFIG_MDNS_WIFI_SSID "Minh Toan"
+#endif
+
+#ifndef CONFIG_MDNS_WIFI_PASSWORD
+#define CONFIG_MDNS_WIFI_PASSWORD "21012004"
+#endif
+
+#ifndef CONFIG_MDNS_MAX_RETRY
+#define CONFIG_MDNS_MAX_RETRY 10
+#endif
+
+#ifndef CONFIG_MDNS_HOSTNAME
+#define CONFIG_MDNS_HOSTNAME "my_smart_light"
+#endif
+
+#ifndef CONFIG_MDNS_INSTANCE_NAME
+#if CONFIG_IDF_TARGET_ESP32S3
+#define CONFIG_MDNS_INSTANCE_NAME "esp32s3_smart_light"
+#else
+#define CONFIG_MDNS_INSTANCE_NAME "esp32c3_smart_light"
+#endif
+#endif
+
+#ifndef CONFIG_MDNS_SERVICE_PORT
+#define CONFIG_MDNS_SERVICE_PORT 80
+#endif
+
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
-static const char *TAG = "mdns discovery";
-
-/* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group = NULL;
 static int s_retry_num = 0;
 
@@ -48,20 +79,27 @@ static void event_handler(void *arg, esp_event_base_t event_base,
                           int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        ESP_LOGI(TAG, "==> [Wi-Fi] Bắt đầu kết nối tới AP SSID: %s...", CONFIG_MDNS_WIFI_SSID);
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_num < LIGHT_ESP_MAXIMUM_RETRY) {
+        s_retry_num++;
+        ESP_LOGW(TAG, "==> [Wi-Fi] Kết nối thất bại lần [%d/%d]! Đang thử lại...",
+                 s_retry_num, CONFIG_MDNS_MAX_RETRY);
+        if (s_retry_num < CONFIG_MDNS_MAX_RETRY) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
             esp_wifi_connect();
-            s_retry_num++;
-            ESP_LOGI(TAG, "retry to connect to the AP");
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
-        ESP_LOGI(TAG, "connect to the AP fail");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         s_retry_num = 0;
+        ESP_LOGI(TAG, "==========================================================");
+        ESP_LOGI(TAG, "==> [Wi-Fi] KẾT NỐI THÀNH CÔNG! ĐÃ CÓ ĐỊA CHỈ IP:        ");
+        ESP_LOGI(TAG, "  - Địa chỉ IP cấp : " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "  - Tên miền mDNS  : %s.local", CONFIG_MDNS_HOSTNAME);
+        ESP_LOGI(TAG, "  - Dịch vụ HTTP   : http://%s.local:%d", CONFIG_MDNS_HOSTNAME, CONFIG_MDNS_SERVICE_PORT);
+        ESP_LOGI(TAG, "==========================================================");
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
@@ -69,143 +107,229 @@ static void event_handler(void *arg, esp_event_base_t event_base,
 static void wifi_initialize(void)
 {
     s_wifi_event_group = xEventGroupCreate();
-
-    /* Initialize TCP/IP */
     ESP_ERROR_CHECK(esp_netif_init());
-
-    /* Initialize the event loop */
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    /* Initialize Wi-Fi including netif with default config */
     esp_netif_create_default_wifi_sta();
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    /* Register our event handler for Wi-Fi and IP related events */
+    wifi_country_t country = {
+        .cc = "VN",
+        .schan = 1,
+        .nchan = 13,
+        .policy = WIFI_COUNTRY_POLICY_AUTO,
+    };
+    esp_wifi_set_country(&country);
+
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 }
 
-static void wifi_station_initialize(void)
+static bool wifi_station_connect(void)
 {
-    /* Start Wi-Fi in station mode */
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = LIGHT_ESP_WIFI_SSID,
-            .password = LIGHT_ESP_WIFI_PASS,
-            /* Setting a password implies station will connect to all security modes including WEP/WPA.
-             * However these modes are deprecated and not advisable to be used. Incase your Access point
-             * doesn't support WPA2, these mode can be enabled by commenting below line */
-            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
-
+            .ssid = CONFIG_MDNS_WIFI_SSID,
+            .password = CONFIG_MDNS_WIFI_PASSWORD,
+            .threshold.authmode = WIFI_AUTH_OPEN,
             .pmf_cfg = {
                 .capable = true,
                 .required = false
             },
         },
     };
+
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "wifi_station_initialize finished.");
+    esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW20);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_max_tx_power(48);
 
-    /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
-     * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                           pdFALSE, pdFALSE, portMAX_DELAY);
 
-    /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-     * happened. */
     if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "connected to ap SSID:%s password:%s", LIGHT_ESP_WIFI_SSID, LIGHT_ESP_WIFI_PASS);
-    } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s", LIGHT_ESP_WIFI_SSID, LIGHT_ESP_WIFI_PASS);
-    } else {
-        ESP_LOGE(TAG, "UNEXPECTED EVENT");
+        return true;
     }
+    ESP_LOGE(TAG, "Không thể kết nối tới AP SSID: %s!", CONFIG_MDNS_WIFI_SSID);
+    return false;
 }
 
-static esp_err_t esp_mdns_discovery_start(void)
+/**
+ * @brief Khởi tạo mDNS Responder và đăng ký dịch vụ HTTP + TXT Records
+ */
+static esp_err_t mdns_discovery_start(void)
 {
-   char *host_name = "my_smart_light";
-   char *instance_name = "esp32c3_smart_light";
+    ESP_LOGI(TAG, "Khởi tạo mDNS Core Service...");
+    esp_err_t err = mdns_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_init thất bại: 0x%x", err);
+        return err;
+    }
 
-   /* 初始化 mdns 组件 */
-   if (mdns_init() != ESP_OK) {
-      ESP_LOGE(TAG, "mdns_init fail");
-      return ESP_FAIL;
-   }
+    // Thiết lập hostname (được phân giải thành my_smart_light.local)
+    err = mdns_hostname_set(CONFIG_MDNS_HOSTNAME);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_hostname_set thất bại: 0x%x", err);
+        return err;
+    }
+    ESP_LOGI(TAG, "==> mDNS Hostname đã thiết lập: [%s.local]", CONFIG_MDNS_HOSTNAME);
 
-   /* 设置主机名，用于其他主机查询的 DNS 域名标识 */
-   if (mdns_hostname_set(host_name) != ESP_OK) {
-      ESP_LOGE(TAG, "mdns_hostname_set fail");
-      goto err;
-   }
+    // Thiết lập instance name đại diện cho thiết bị
+    err = mdns_instance_name_set(CONFIG_MDNS_INSTANCE_NAME);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_instance_name_set thất bại: 0x%x", err);
+        return err;
+    }
+    ESP_LOGI(TAG, "==> mDNS Instance Name: [%s]", CONFIG_MDNS_INSTANCE_NAME);
 
-   ESP_LOGI(TAG, "mdns hostname set to: [%s]", host_name);
+    // Chuẩn bị bản ghi TXT Record metadata
+#if CONFIG_IDF_TARGET_ESP32S3
+    const char *board_name = "esp32s3";
+#else
+    const char *board_name = "esp32c3";
+#endif
 
-   /* 设置 mDNS 实例名，用于 mDNS 局域网发现 */
-   if (mdns_instance_name_set(instance_name) != ESP_OK) {
-      ESP_LOGE(TAG, "mdns_instance_name_set fail");
-      goto err;
-   }
+    mdns_txt_item_t service_txt_data[2] = {
+        {"board", board_name},
+        {"path", "/foobar"}
+    };
 
-   /* 设置服务 TXT 字段数据 （可选的）*/
-   mdns_txt_item_t serviceTxtData[1] = {
-      {"board", "esp32c3"}
-   };
+    // Đăng ký dịch vụ _http._tcp trên cổng chỉ định (port 80)
+    err = mdns_service_add(CONFIG_MDNS_INSTANCE_NAME, "_http", "_tcp",
+                           CONFIG_MDNS_SERVICE_PORT, service_txt_data, 2);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_service_add thất bại: 0x%x", err);
+        return err;
+    }
 
-   /* 添加 http 服务，端口号 80 到 mDNS 服务 */
-   /* 第二个参数代表应用层协议， 第三个参数代表传输层协议，需要对应 */
-   if (mdns_service_add(instance_name, "_http", "_tcp", 80, serviceTxtData, 1) != ESP_OK) {
-      ESP_LOGE(TAG, "mdns_instance_name_set fail");
-      goto err;
-   }
-
-   /* 设置服务 TXT 字段数据 */
-   if (mdns_service_txt_item_set("_http", "_tcp", "path", "/foobar") != ESP_OK) {
-      ESP_LOGE(TAG, "mdns_service_txt_item_set fail");
-      goto err;
-   }
-   return ESP_OK;
-err:
-   mdns_free();
-   return ESP_FAIL;
+    ESP_LOGI(TAG, "==> Đã công bố dịch vụ mDNS: _http._tcp trên port %d", CONFIG_MDNS_SERVICE_PORT);
+    ESP_LOGI(TAG, "    Metadata TXT: board=%s, path=/foobar", board_name);
+    return ESP_OK;
 }
 
-void app_main()
+/**
+ * @brief Server HTTP cổng 80 phản hồi khi client truy cập qua tên miền mDNS
+ */
+static void http_server_task(void *pvParameters)
 {
-    int i = 0;
-    ESP_LOGE(TAG, "app_main");
+    char rx_buffer[512];
+    int opt = 1;
 
-    /**
-     * @brief NVS Flash initialization
-     */
-    ESP_LOGI(TAG, "NVS Flash initialization");
-    app_storage_init();
+    int listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    if (listen_sock < 0) {
+        ESP_LOGE(TAG, "Không thể tạo TCP socket cổng 80: errno %d", errno);
+        vTaskDelete(NULL);
+        return;
+    }
 
-    /**
-     * @brief Application driver initialization
-     */
-    ESP_LOGI(TAG, "Application driver initialization");
-    app_driver_init();
+    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    /**
-     * @brief Wi-Fi initialization
-     */
-    ESP_LOGI(TAG, "Wi-Fi initialization");
-    wifi_initialize();
+    struct sockaddr_in saddr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(CONFIG_MDNS_SERVICE_PORT),
+        .sin_addr.s_addr = htonl(INADDR_ANY),
+    };
 
-    /**
-     * @brief Wi-Fi Station initialization
-     */
-    ESP_LOGI(TAG, "Wi-Fi Station initialization");
-    wifi_station_initialize();
+    int err = bind(listen_sock, (struct sockaddr *)&saddr, sizeof(saddr));
+    if (err < 0) {
+        ESP_LOGE(TAG, "Không thể bind socket cổng %d: errno %d", CONFIG_MDNS_SERVICE_PORT, errno);
+        close(listen_sock);
+        vTaskDelete(NULL);
+        return;
+    }
 
-    esp_mdns_discovery_start();
+    err = listen(listen_sock, 4);
+    if (err < 0) {
+        ESP_LOGE(TAG, "Lỗi lắng nghe socket cổng %d: errno %d", CONFIG_MDNS_SERVICE_PORT, errno);
+        close(listen_sock);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGI(TAG, "HTTP Server sẵn sàng tại http://%s.local:%d/", CONFIG_MDNS_HOSTNAME, CONFIG_MDNS_SERVICE_PORT);
 
     while (1) {
-        ESP_LOGI(TAG, "[%02d] Hello world!", i++);
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        struct sockaddr_in source_addr;
+        socklen_t addr_len = sizeof(source_addr);
+        int client_sock = accept(listen_sock, (struct sockaddr *)&source_addr, &addr_len);
+        if (client_sock < 0) {
+            ESP_LOGE(TAG, "accept thất bại: errno %d", errno);
+            break;
+        }
+
+        char client_ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &source_addr.sin_addr, client_ip, sizeof(client_ip));
+        int len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+        if (len > 0) {
+            rx_buffer[len] = '\0';
+            ESP_LOGI(TAG, "[HTTP GET] Yêu cầu từ %s:%d", client_ip, ntohs(source_addr.sin_port));
+
+            // Hiệu ứng LED xanh lá phản hồi trực quan
+            uint8_t old_r, old_g, old_b;
+            app_driver_get_rgb(&old_r, &old_g, &old_b);
+            bool was_on = app_driver_get_state();
+
+            app_driver_set_color(0, 255, 0);
+            app_driver_set_state(true);
+
+            const char *http_resp =
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/plain; charset=utf-8\r\n"
+                "Connection: close\r\n\r\n"
+                "PBL5 Smart Light mDNS Discovery OK!\r\n"
+                "Resolved via: my_smart_light.local:80\r\n";
+
+            send(client_sock, http_resp, strlen(http_resp), 0);
+
+            vTaskDelay(pdMS_TO_TICKS(350));
+            app_driver_set_color(old_r, old_g, old_b);
+            app_driver_set_state(was_on);
+        }
+
+        close(client_sock);
+    }
+
+    close(listen_sock);
+    vTaskDelete(NULL);
+}
+
+void app_main(void)
+{
+    ESP_LOGI(TAG, "==========================================================");
+    ESP_LOGI(TAG, "    PBL5 Smart Light - Mục 8.2.4: mDNS Zero-Config        ");
+    ESP_LOGI(TAG, "    mDNS Hostname    : %s.local", CONFIG_MDNS_HOSTNAME);
+    ESP_LOGI(TAG, "    Service Advertised: _http._tcp on Port %d", CONFIG_MDNS_SERVICE_PORT);
+    ESP_LOGI(TAG, "    WS2812B Hardware SPI2 DMA @ 3.2MHz | GPIO %d", LIGHT_GPIO_WS2812);
+    ESP_LOGI(TAG, "    Boot Button HAL  : GPIO %d (Active Level %d)", LIGHT_BUTTON_GPIO, LIGHT_BUTTON_ACTIVE_LEVEL);
+    ESP_LOGI(TAG, "==========================================================");
+
+    // 1. Khởi tạo NVS Storage
+    app_storage_init();
+
+    // 2. Khởi tạo Application Driver & WS2812B LED HAL
+    app_driver_init();
+
+    // 3. Khởi tạo Wi-Fi TCP/IP Stack & Kết nối AP
+    wifi_initialize();
+    if (!wifi_station_connect()) {
+        ESP_LOGE(TAG, "Dừng khởi tạo ứng dụng do Wi-Fi thất bại.");
+        return;
+    }
+
+    // 4. Khởi chạy dịch vụ mDNS Discovery
+    if (mdns_discovery_start() == ESP_OK) {
+        ESP_LOGI(TAG, "==> mDNS Responder đã khởi động thành công!");
+    }
+
+    // 5. Khởi chạy HTTP Server nền trên cổng 80 để phản hồi truy vấn
+    xTaskCreate(http_server_task, "http_server_task", 4096, NULL, 5, NULL);
+
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(30000));
     }
 }

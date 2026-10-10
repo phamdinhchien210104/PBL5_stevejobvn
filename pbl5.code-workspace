@@ -1,36 +1,86 @@
 {
     "folders": [
         {
-            "name": "🌟 1_blink",
+            "name": "🚀 [DF] 1_blink",
             "path": "device_firmware/1_blink"
         },
         {
-            "name": "💡 2_light_drivers",
+            "name": "🚀 [DF] 2_light_drivers",
             "path": "device_firmware/2_light_drivers"
         },
         {
-            "name": "📶 3_wifi_connection",
+            "name": "🚀 [DF] 3_wifi_connection",
             "path": "device_firmware/3_wifi_connection"
         },
         {
-            "name": "📲 4_network_config",
+            "name": "🚀 [DF] 4_network_config",
             "path": "device_firmware/4_network_config"
         },
         {
-            "name": "☁️ 5_rainmaker",
+            "name": "🚀 [DF] 5_rainmaker",
             "path": "device_firmware/5_rainmaker"
         },
         {
-            "name": "⚡ 6_project_optimize",
+            "name": "🚀 [DF] 6_project_optimize",
             "path": "device_firmware/6_project_optimize"
         },
         {
-            "name": "📊 7_insights",
+            "name": "🚀 [DF] 7_insights",
             "path": "device_firmware/7_insights"
         },
         {
-            "name": "📁 Repository Root (Full Source & Apps)",
-            "path": "."
+            "name": "🧪 [TC] 8.2.1 - broadcast_discovery",
+            "path": "test_case/broadcast_discovery"
+        },
+        {
+            "name": "🧪 [TC] 8.2.2, 8.2.3 - multicast_discovery",
+            "path": "test_case/multicast_discovery"
+        },
+        {
+            "name": "🧪 [TC] 8.2.4 - mdns_discovery",
+            "path": "test_case/mdns_discovery"
+        },
+        {
+            "name": "🧪 [TC] 8.3.1 - tcp_socket",
+            "path": "test_case/tcp_socket"
+        },
+        {
+            "name": "🧪 [TC] 8.3.2, 8.4.1 - https_server",
+            "path": "test_case/https_server"
+        },
+        {
+            "name": "🧪 [TC] 8.3.3 - udp_socket",
+            "path": "test_case/udp_socket"
+        },
+        {
+            "name": "🧪 [TC] 8.3.4, 8.4.2 - coap",
+            "path": "test_case/coap"
+        },
+        {
+            "name": "🧪 [TC] 8.3.5, 8.5.3 - gatt_server",
+            "path": "test_case/gatt_server"
+        },
+        {
+            "name": "🧪 [TC] 8.5.1, 8.5.2 - local_control",
+            "path": "test_case/local_control"
+        },
+        {
+            "name": "🧪 [TC] 9.2 - mqtt_tcp",
+            "path": "test_case/mqtt_tcp"
+        },
+        {
+            "name": "🧪 [TC] 11.3.1 - advanced_https_ota",
+            "path": "test_case/advanced_https_ota"
+        },
+        {
+            "name": "📁 [Root] Repository",
+            "path": ".",
+            "settings": {
+                "files.exclude": {
+                    "device_firmware": true,
+                    "test_case": true
+                }
+            }
         }
     ],
     "settings": {
@@ -59,6 +109,7 @@
             "--completion-style=detailed",
             "--header-insertion=never"
         ],
-        "vscode-edge-devtools.webhint": false
+        "vscode-edge-devtools.webhint": false,
+        "explorer.excludeGitIgnore": false
     }
 }
