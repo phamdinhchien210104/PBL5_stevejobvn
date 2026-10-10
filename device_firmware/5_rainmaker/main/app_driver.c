@@ -18,6 +18,7 @@
 
 #include "iot_button.h"
 #include "light_driver.h"
+#include "ws2812_driver.h"
 
 #include <esp_rmaker_core.h>
 #include <esp_rmaker_standard_params.h>
@@ -133,6 +134,92 @@ bool app_driver_get_state(void)
     return g_output_state;
 }
 
+/* Biến điều khiển chuyển màu mượt mà (Smooth Fading) */
+static float s_current_brightness = (float)DEFAULT_BRIGHTNESS;
+static float s_target_brightness  = (float)DEFAULT_BRIGHTNESS;
+static float s_current_hue        = (float)DEFAULT_HUE;
+static float s_target_hue         = (float)DEFAULT_HUE;
+static float s_current_sat        = (float)DEFAULT_SATURATION;
+static float s_target_sat         = (float)DEFAULT_SATURATION;
+
+static TimerHandle_t s_smooth_fade_timer = NULL;
+static TimerHandle_t s_lazy_save_timer   = NULL;
+
+/* Timer lưu cấu hình NVS sau khi người dùng dừng thao tác thanh trượt 1.5s (tránh nghẽn Flash) */
+static void lazy_save_timer_cb(TimerHandle_t xTimer)
+{
+    ESP_LOGI(TAG, "[Lazy Save] Persisting light state to NVS: H=%d, S=%d, B=%d",
+             g_hue, g_saturation, g_brightness);
+    light_driver_set_hsv(g_hue, g_saturation, g_brightness);
+}
+
+static void schedule_lazy_save(void)
+{
+    if (s_lazy_save_timer == NULL) {
+        s_lazy_save_timer = xTimerCreate("lazy_save", pdMS_TO_TICKS(1500), pdFALSE, NULL, lazy_save_timer_cb);
+    }
+    if (s_lazy_save_timer != NULL) {
+        xTimerReset(s_lazy_save_timer, 0);
+    }
+}
+
+/* Helper chuyển đổi HSV sang RGB (0-255) */
+static void hsv_to_rgb(uint16_t h, uint8_t s, uint8_t v, uint8_t *r, uint8_t *g, uint8_t *b);
+
+/* Timer nội suy làm mượt (Smooth Fade) chạy 50Hz (20ms/bước) */
+static void smooth_fade_timer_cb(TimerHandle_t xTimer)
+{
+    bool is_busy = false;
+
+    // 1. Nội suy Brightness (mượt mà từng bước 10-15%)
+    float diff_b = s_target_brightness - s_current_brightness;
+    if (diff_b > 0.5f || diff_b < -0.5f) {
+        s_current_brightness += diff_b * 0.35f;
+        is_busy = true;
+    } else {
+        s_current_brightness = s_target_brightness;
+    }
+
+    // 2. Nội suy Hue (chuyển màu êm dịu)
+    float diff_h = s_target_hue - s_current_hue;
+    if (diff_h > 1.0f || diff_h < -1.0f) {
+        s_current_hue += diff_h * 0.35f;
+        is_busy = true;
+    } else {
+        s_current_hue = s_target_hue;
+    }
+
+    // 3. Nội suy Saturation
+    float diff_s = s_target_sat - s_current_sat;
+    if (diff_s > 0.5f || diff_s < -0.5f) {
+        s_current_sat += diff_s * 0.35f;
+        is_busy = true;
+    } else {
+        s_current_sat = s_target_sat;
+    }
+
+    if (g_output_state) {
+        uint8_t r = 0, g = 0, b = 0;
+        hsv_to_rgb((uint16_t)s_current_hue, (uint8_t)s_current_sat, (uint8_t)s_current_brightness, &r, &g, &b);
+        ws2812_set_all(r, g, b);
+        ws2812_refresh();
+    }
+
+    if (!is_busy) {
+        xTimerStop(s_smooth_fade_timer, 0);
+    }
+}
+
+static void trigger_smooth_fade(void)
+{
+    if (s_smooth_fade_timer == NULL) {
+        s_smooth_fade_timer = xTimerCreate("smooth_fade", pdMS_TO_TICKS(20), pdTRUE, NULL, smooth_fade_timer_cb);
+    }
+    if (s_smooth_fade_timer != NULL) {
+        xTimerStart(s_smooth_fade_timer, 0);
+    }
+}
+
 esp_err_t app_light_set_power(bool power)
 {
     g_output_state = power;
@@ -143,34 +230,50 @@ esp_err_t app_light_set_power(bool power)
 
 esp_err_t app_light_set(uint32_t hue, uint32_t saturation, uint32_t brightness)
 {
-    g_hue = hue;
-    g_saturation = saturation;
-    g_brightness = brightness;
-    ESP_LOGI(TAG, "app_light_set HSV: (%lu, %lu, %lu)", (unsigned long)hue, (unsigned long)saturation, (unsigned long)brightness);
-    return light_driver_set_hsv(hue, saturation, brightness);
+    g_hue = (uint16_t)hue;
+    g_saturation = (uint8_t)saturation;
+    g_brightness = (uint8_t)brightness;
+
+    s_target_hue = (float)g_hue;
+    s_target_sat = (float)g_saturation;
+    s_target_brightness = (float)g_brightness;
+
+    trigger_smooth_fade();
+    schedule_lazy_save();
+    return ESP_OK;
 }
 
 esp_err_t app_light_set_brightness(uint16_t brightness)
 {
     g_brightness = (uint8_t)brightness;
-    ESP_LOGI(TAG, "app_light_set_brightness: %d%%", g_brightness);
-    /* Trong mô hình màu HSV, Value (độ sáng) chính là tham số quyết định độ sáng của WS2812B */
-    return light_driver_set_hsv(g_hue, g_saturation, g_brightness);
+    s_target_brightness = (float)g_brightness;
+
+    /* Kích hoạt chuyển động sáng mờ dần/bừng sáng siêu êm */
+    trigger_smooth_fade();
+    schedule_lazy_save();
+    return ESP_OK;
 }
 
 esp_err_t app_light_set_hue(uint16_t hue)
 {
     g_hue = hue;
-    ESP_LOGI(TAG, "app_light_set_hue: %d", hue);
-    return light_driver_set_hsv(g_hue, g_saturation, g_brightness);
+    s_target_hue = (float)g_hue;
+
+    trigger_smooth_fade();
+    schedule_lazy_save();
+    return ESP_OK;
 }
 
 esp_err_t app_light_set_saturation(uint16_t saturation)
 {
     g_saturation = (uint8_t)saturation;
-    ESP_LOGI(TAG, "app_light_set_saturation: %d", saturation);
-    return light_driver_set_hsv(g_hue, g_saturation, g_brightness);
+    s_target_sat = (float)g_saturation;
+
+    trigger_smooth_fade();
+    schedule_lazy_save();
+    return ESP_OK;
 }
+
 
 /* Helper chuyển đổi HSV (0-360, 0-100, 0-100) sang RGB (0-255) */
 static void hsv_to_rgb(uint16_t h, uint8_t s, uint8_t v, uint8_t *r, uint8_t *g, uint8_t *b)
