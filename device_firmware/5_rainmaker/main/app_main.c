@@ -31,6 +31,7 @@
 #include "lwip/sys.h"
 
 #include "esp_rmaker_core.h"
+#include "esp_rmaker_standard_types.h"
 #include "esp_rmaker_standard_params.h"
 #include "esp_rmaker_standard_devices.h"
 #include "esp_rmaker_ota.h"
@@ -77,6 +78,10 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
             ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
                      device_name, param_name, val.val.i);
             app_light_set_saturation(val.val.i);
+        } else if (strcmp(param_name, "Effect") == 0) {
+            ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %s",
+                     device_name, param_name, val.val.s);
+            app_light_set_effect(val.val.s);
         } else {
             ESP_LOGW(TAG, "Ignoring unhandled param: %s", param_name);
             continue;
@@ -158,6 +163,17 @@ void app_main(void)
     esp_rmaker_device_add_param(light_device, esp_rmaker_brightness_param_create(ESP_RMAKER_DEF_BRIGHTNESS_NAME, DEFAULT_BRIGHTNESS));
     esp_rmaker_device_add_param(light_device, esp_rmaker_hue_param_create(ESP_RMAKER_DEF_HUE_NAME, DEFAULT_HUE));
     esp_rmaker_device_add_param(light_device, esp_rmaker_saturation_param_create(ESP_RMAKER_DEF_SATURATION_NAME, DEFAULT_SATURATION));
+
+    /* Thêm tham số chọn hiệu ứng ánh sáng (Static / Blink / Breathing / Rainbow) */
+    static const char *s_effects[] = {"Static", "Blink", "Breathing", "Rainbow"};
+    esp_rmaker_param_t *effect_param = esp_rmaker_param_create("Effect", "esp.param.mode",
+                                                              esp_rmaker_str("Static"),
+                                                              PROP_FLAG_READ | PROP_FLAG_WRITE);
+    if (effect_param) {
+        esp_rmaker_param_add_ui_type(effect_param, ESP_RMAKER_UI_DROPDOWN);
+        esp_rmaker_param_add_valid_str_list(effect_param, s_effects, sizeof(s_effects) / sizeof(s_effects[0]));
+        esp_rmaker_device_add_param(light_device, effect_param);
+    }
 
     esp_rmaker_node_add_device(node, light_device);
 

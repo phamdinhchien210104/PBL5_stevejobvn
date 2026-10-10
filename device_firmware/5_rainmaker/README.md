@@ -106,4 +106,6 @@ idf.py -C d:\Document\PBL5_stevejobvn\device_firmware\5_rainmaker -p COM3 flash 
 | **6** | **Hẹn Giờ Tự Động (Schedule)** | Tạo lịch trong mục *Schedules* trên App (ví dụ: Bật đèn sau 1 phút). | Đúng giờ hẹn đèn tự động chuyển trạng thái (kể cả khi ngắt đường truyền Internet ra ngoài). |
 | **7** | **Khôi Phục Cài Đặt Gốc (Phím Cứng)** | Nhấn **giữ nút Boot > 3 giây**. | Đèn nhấp nháy đỏ báo hiệu, thiết bị xóa cấu hình Wi-Fi trong NVS, reset và quay lại chế độ phát mã QR / BLE chờ cấu hình mới. |
 | **8** | **Đổi Wi-Fi Từ Xa Trên App (System Service)** | Mở thiết bị trong App $\rightarrow$ Cài đặt (Menu góc phải) $\rightarrow$ **Reset Wi-Fi** (hoặc Remove Device). | Cloud gửi lệnh xuống, ESP32-C3 tự động xóa NVS và khởi động lại sau 2 giây, phát lại BLE để nạp Wi-Fi mới mà không cần chạm vào nút bấm vật lý. |
+| **9** | **Chọn Hiệu Ứng (Lighting Effect)** | Chọn mục **Effect** trên App (`Static`, `Blink`, `Breathing`, `Rainbow`). | Đèn LED chuyển hiệu ứng tức thời: nhấp nháy, thở mờ dần, xoay dải màu cầu vồng hoặc sáng tĩnh. |
+
 

@@ -171,3 +171,86 @@ esp_err_t app_light_set_saturation(uint16_t saturation)
     ESP_LOGI(TAG, "app_light_set_saturation: %d", saturation);
     return light_driver_set_hsv(g_hue, g_saturation, g_brightness);
 }
+
+/* Helper chuyển đổi HSV (0-360, 0-100, 0-100) sang RGB (0-255) */
+static void hsv_to_rgb(uint16_t h, uint8_t s, uint8_t v, uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    h = h % 360;
+    uint16_t hi = (h / 60) % 6;
+    uint16_t F = 100 * h / 60 - 100 * hi;
+    uint16_t P = v * (100 - s) / 100;
+    uint16_t Q = v * (10000 - F * s) / 10000;
+    uint16_t T = v * (10000 - s * (100 - F)) / 10000;
+
+    switch (hi) {
+        case 0: *r = v; *g = T; *b = P; break;
+        case 1: *r = Q; *g = v; *b = P; break;
+        case 2: *r = P; *g = v; *b = T; break;
+        case 3: *r = P; *g = Q; *b = v; break;
+        case 4: *r = T; *g = P; *b = v; break;
+        case 5: *r = v; *g = P; *b = Q; break;
+        default: *r = 0; *g = 0; *b = 0; break;
+    }
+
+    *r = (uint8_t)(*r * 255 / 100);
+    *g = (uint8_t)(*g * 255 / 100);
+    *b = (uint8_t)(*b * 255 / 100);
+}
+
+/* Task xử lý hiệu ứng cầu vồng xoay dải màu (Rainbow Effect) */
+static TaskHandle_t s_rainbow_task_handle = NULL;
+
+static void rainbow_effect_task(void *arg)
+{
+    uint16_t rainbow_hue = 0;
+    while (1) {
+        light_driver_set_hsv(rainbow_hue, 100, g_brightness > 0 ? g_brightness : 50);
+        rainbow_hue = (rainbow_hue + 5) % 360;
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+}
+
+static void stop_rainbow_task(void)
+{
+    if (s_rainbow_task_handle != NULL) {
+        vTaskDelete(s_rainbow_task_handle);
+        s_rainbow_task_handle = NULL;
+    }
+}
+
+esp_err_t app_light_set_effect(const char *effect)
+{
+    if (!effect) return ESP_ERR_INVALID_ARG;
+    ESP_LOGI(TAG, "app_light_set_effect: '%s'", effect);
+
+    uint8_t r = 0, g = 0, b = 0;
+    hsv_to_rgb(g_hue, g_saturation, g_brightness, &r, &g, &b);
+    if (r == 0 && g == 0 && b == 0) {
+        /* Đảm bảo có màu khi bật hiệu ứng */
+        r = 0; g = 255; b = 255;
+    }
+
+    stop_rainbow_task();
+
+    if (strcasecmp(effect, "Blink") == 0) {
+        light_driver_breath_stop();
+        light_driver_blink_start(r, g, b);
+    } else if (strcasecmp(effect, "Breathing") == 0) {
+        light_driver_blink_stop();
+        light_driver_breath_start(r, g, b);
+    } else if (strcasecmp(effect, "Rainbow") == 0) {
+        light_driver_blink_stop();
+        light_driver_breath_stop();
+        if (s_rainbow_task_handle == NULL) {
+            xTaskCreate(rainbow_effect_task, "rainbow_task", 2048, NULL, 5, &s_rainbow_task_handle);
+        }
+    } else {
+        /* "Static" hoặc chế độ thường: Dừng tất cả hiệu ứng và hiển thị màu tĩnh */
+        light_driver_blink_stop();
+        light_driver_breath_stop();
+        light_driver_set_hsv(g_hue, g_saturation, g_brightness);
+    }
+
+    return ESP_OK;
+}
+
