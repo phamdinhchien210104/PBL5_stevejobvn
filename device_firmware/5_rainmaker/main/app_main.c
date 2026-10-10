@@ -87,7 +87,13 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
             continue;
         }
 
-        esp_rmaker_param_update_and_report(param, val);
+        /* Cập nhật giá trị vào Node Shadow cục bộ mà không bắn MQTT publish lặp đi lặp lại */
+        if (i < count - 1) {
+            esp_rmaker_param_update(param, val);
+        } else {
+            /* Chỉ gửi 1 bản tin báo cáo hoàn tất sau khi toàn bộ tham số đã xử lý xong */
+            esp_rmaker_param_update_and_report(param, val);
+        }
     }
 
     return ESP_OK;
