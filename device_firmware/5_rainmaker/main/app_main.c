@@ -47,40 +47,74 @@ esp_rmaker_device_t *light_device;
 
 extern const char ota_server_cert[] asm("_binary_server_crt_start");
 
-/* Callback to handle commands received from the RainMaker cloud */
-static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_param_t *param,
-                          const esp_rmaker_param_val_t val, void *priv_data, esp_rmaker_write_ctx_t *ctx)
+/* Callback xử lý tập lệnh từ Cloud/App RainMaker theo cơ chế Bulk Write tránh giật lag UI */
+static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_param_write_req_t write_req[],
+                          uint8_t count, void *priv_data, esp_rmaker_write_ctx_t *ctx)
 {
     if (ctx) {
-        ESP_LOGI(TAG, "Received write request via : %s", esp_rmaker_device_cb_src_to_str(ctx->src));
+        ESP_LOGI(TAG, "Received write request via : %s (%d params)", esp_rmaker_device_cb_src_to_str(ctx->src), count);
     }
     const char *device_name = esp_rmaker_device_get_name(device);
-    const char *param_name = esp_rmaker_param_get_name(param);
 
-    if (strcmp(param_name, ESP_RMAKER_DEF_POWER_NAME) == 0) {
-        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %s",
-                 device_name, param_name, val.val.b ? "ON" : "OFF");
-        app_light_set_power(val.val.b);
-    } else if (strcmp(param_name, ESP_RMAKER_DEF_BRIGHTNESS_NAME) == 0) {
-        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
-                 device_name, param_name, val.val.i);
-        app_light_set_brightness(val.val.i);
-    } else if (strcmp(param_name, ESP_RMAKER_DEF_HUE_NAME) == 0) {
-        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
-                 device_name, param_name, val.val.i);
-        app_light_set_hue(val.val.i);
-    } else if (strcmp(param_name, ESP_RMAKER_DEF_SATURATION_NAME) == 0) {
-        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
-                 device_name, param_name, val.val.i);
-        app_light_set_saturation(val.val.i);
-    } else {
-        ESP_LOGW(TAG, "Ignoring unhandled param: %s", param_name);
-        return ESP_OK;
+    for (uint8_t i = 0; i < count; i++) {
+        const esp_rmaker_param_t *param = write_req[i].param;
+        esp_rmaker_param_val_t val = write_req[i].val;
+        const char *param_name = esp_rmaker_param_get_name(param);
+
+        if (strcmp(param_name, ESP_RMAKER_DEF_POWER_NAME) == 0) {
+            ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %s",
+                     device_name, param_name, val.val.b ? "ON" : "OFF");
+            app_light_set_power(val.val.b);
+        } else if (strcmp(param_name, ESP_RMAKER_DEF_BRIGHTNESS_NAME) == 0) {
+            ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
+                     device_name, param_name, val.val.i);
+            app_light_set_brightness(val.val.i);
+        } else if (strcmp(param_name, ESP_RMAKER_DEF_HUE_NAME) == 0) {
+            ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
+                     device_name, param_name, val.val.i);
+            app_light_set_hue(val.val.i);
+        } else if (strcmp(param_name, ESP_RMAKER_DEF_SATURATION_NAME) == 0) {
+            ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
+                     device_name, param_name, val.val.i);
+            app_light_set_saturation(val.val.i);
+        } else {
+            ESP_LOGW(TAG, "Ignoring unhandled param: %s", param_name);
+            continue;
+        }
+
+        esp_rmaker_param_update_and_report(param, val);
     }
 
-    esp_rmaker_param_update_and_report(param, val);
     return ESP_OK;
 }
+
+static void on_wifi_sta_start(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    wifi_country_t country = {
+        .cc = "VN",
+        .schan = 1,
+        .nchan = 13,
+        .policy = WIFI_COUNTRY_POLICY_AUTO,
+    };
+    esp_wifi_set_country(&country);
+
+    wifi_config_t conf;
+    if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
+        conf.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+        conf.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+        conf.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        conf.sta.pmf_cfg.capable = false;
+        conf.sta.pmf_cfg.required = false;
+        conf.sta.disable_wpa3_compatible_mode = 1;
+        conf.sta.failure_retry_cnt = 3;
+        esp_wifi_set_config(WIFI_IF_STA, &conf);
+    }
+
+    esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW20);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_max_tx_power(48); // 12 dBm - chuẩn ổn định cho ESP32-C3 chống sụt áp nguồn RF
+}
+
 
 void app_main(void)
 {
@@ -101,6 +135,9 @@ void app_main(void)
     ESP_LOGI(TAG, "Initializing Wi-Fi Provisioning Netif...");
     app_wifi_init();
 
+    /* Đăng ký Event Handler để tinh chỉnh kết nối ổn định mỗi khi Wi-Fi STA khởi động */
+    esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_START, on_wifi_sta_start, NULL, NULL);
+
     /* 4. Initialize ESP RainMaker Agent */
     ESP_LOGI(TAG, "Initializing ESP RainMaker Node...");
     esp_rmaker_config_t rainmaker_cfg = {
@@ -116,7 +153,7 @@ void app_main(void)
     /* 5. Create Lightbulb device with standard parameters */
     ESP_LOGI(TAG, "Creating standard Lightbulb device and parameters...");
     light_device = esp_rmaker_lightbulb_device_create("Light", NULL, DEFAULT_POWER);
-    esp_rmaker_device_add_cb(light_device, write_cb, NULL);
+    esp_rmaker_device_add_bulk_cb(light_device, write_cb, NULL);
 
     esp_rmaker_device_add_param(light_device, esp_rmaker_brightness_param_create(ESP_RMAKER_DEF_BRIGHTNESS_NAME, DEFAULT_BRIGHTNESS));
     esp_rmaker_device_add_param(light_device, esp_rmaker_hue_param_create(ESP_RMAKER_DEF_HUE_NAME, DEFAULT_HUE));
@@ -142,7 +179,13 @@ void app_main(void)
     esp_rmaker_ota_enable(&ota_config, OTA_USING_PARAMS);
 
     ESP_LOGI(TAG, "Enabling System Service (Reboot & Factory Reset)...");
-    esp_rmaker_system_service_enable(NULL);
+    esp_rmaker_system_serv_config_t system_serv_config = {
+        .flags = SYSTEM_SERV_FLAG_REBOOT | SYSTEM_SERV_FLAG_FACTORY_RESET,
+        .reboot_seconds = 2,
+        .reset_seconds = 2,
+        .reset_reboot_seconds = 2,
+    };
+    esp_rmaker_system_service_enable(&system_serv_config);
 
     /* 7. Start the ESP RainMaker Agent */
     ESP_LOGI(TAG, "Starting ESP RainMaker Agent...");

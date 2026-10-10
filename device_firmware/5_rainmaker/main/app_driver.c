@@ -152,21 +152,22 @@ esp_err_t app_light_set(uint32_t hue, uint32_t saturation, uint32_t brightness)
 
 esp_err_t app_light_set_brightness(uint16_t brightness)
 {
-    g_brightness = brightness;
-    ESP_LOGI(TAG, "app_light_set_brightness: %d", brightness);
-    return light_driver_set_brightness(brightness);
+    g_brightness = (uint8_t)brightness;
+    ESP_LOGI(TAG, "app_light_set_brightness: %d%%", g_brightness);
+    /* Trong mô hình màu HSV, Value (độ sáng) chính là tham số quyết định độ sáng của WS2812B */
+    return light_driver_set_hsv(g_hue, g_saturation, g_brightness);
 }
 
 esp_err_t app_light_set_hue(uint16_t hue)
 {
     g_hue = hue;
     ESP_LOGI(TAG, "app_light_set_hue: %d", hue);
-    return light_driver_set_hue(hue);
+    return light_driver_set_hsv(g_hue, g_saturation, g_brightness);
 }
 
 esp_err_t app_light_set_saturation(uint16_t saturation)
 {
-    g_saturation = saturation;
+    g_saturation = (uint8_t)saturation;
     ESP_LOGI(TAG, "app_light_set_saturation: %d", saturation);
-    return light_driver_set_saturation(saturation);
+    return light_driver_set_hsv(g_hue, g_saturation, g_brightness);
 }
