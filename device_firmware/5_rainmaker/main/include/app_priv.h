@@ -63,5 +63,10 @@ esp_err_t app_light_set_hue(uint16_t hue);
  * @brief Set light saturation (0-100)
  */
 esp_err_t app_light_set_saturation(uint16_t saturation);
+ 
+/**
+ * @brief Set light effect mode ("Static", "Blink", "Breathing", "Rainbow")
+ */
+esp_err_t app_light_set_effect(const char *effect);
 
 #endif /**< __APP_PRIVATE_H__ */

@@ -1,0 +1,41 @@
+menu "TCP Socket Configuration"
+
+    config TCP_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "Minh Toan"
+        help
+            SSID of the Access Point to connect to for TCP Socket.
+
+    config TCP_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "21012004"
+        help
+            Password of the Access Point to connect to.
+
+    config TCP_MAX_RETRY
+        int "Maximum Wi-Fi Connection Retries"
+        default 10
+        help
+            Number of retries before reporting Wi-Fi connection failure.
+
+    config TCP_PORT
+        int "TCP Server Port"
+        default 3333
+        help
+            Port number for TCP Server to listen on (default: 3333).
+
+    config TCP_IS_CLIENT
+        bool "Run as TCP Client (Default is TCP Server / Smart Light)"
+        default n
+        help
+            When enabled, acts as client connecting to a remote TCP Server.
+            When disabled (default), acts as TCP Server receiving commands.
+
+    config TCP_SERVER_HOST
+        string "Remote TCP Server IP (for Client mode)"
+        default "192.168.1.100"
+        depends on TCP_IS_CLIENT
+        help
+            Remote IPv4 address to connect to when running in client mode.
+
+endmenu

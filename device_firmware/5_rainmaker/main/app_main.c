@@ -31,6 +31,7 @@
 #include "lwip/sys.h"
 
 #include "esp_rmaker_core.h"
+#include "esp_rmaker_standard_types.h"
 #include "esp_rmaker_standard_params.h"
 #include "esp_rmaker_standard_devices.h"
 #include "esp_rmaker_ota.h"
@@ -47,38 +48,60 @@ esp_rmaker_device_t *light_device;
 
 extern const char ota_server_cert[] asm("_binary_server_crt_start");
 
-/* Callback to handle commands received from the RainMaker cloud */
-static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_param_t *param,
-                          const esp_rmaker_param_val_t val, void *priv_data, esp_rmaker_write_ctx_t *ctx)
+/* Callback xử lý tập lệnh từ Cloud/App RainMaker theo cơ chế Bulk Write tránh giật lag UI */
+static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_param_write_req_t write_req[],
+                          uint8_t count, void *priv_data, esp_rmaker_write_ctx_t *ctx)
 {
     if (ctx) {
-        ESP_LOGI(TAG, "Received write request via : %s", esp_rmaker_device_cb_src_to_str(ctx->src));
+        ESP_LOGI(TAG, "Received write request via : %s (%d params)", esp_rmaker_device_cb_src_to_str(ctx->src), count);
     }
     const char *device_name = esp_rmaker_device_get_name(device);
-    const char *param_name = esp_rmaker_param_get_name(param);
 
-    if (strcmp(param_name, ESP_RMAKER_DEF_POWER_NAME) == 0) {
-        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %s",
-                 device_name, param_name, val.val.b ? "ON" : "OFF");
-        app_light_set_power(val.val.b);
-    } else if (strcmp(param_name, ESP_RMAKER_DEF_BRIGHTNESS_NAME) == 0) {
-        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
-                 device_name, param_name, val.val.i);
-        app_light_set_brightness(val.val.i);
-    } else if (strcmp(param_name, ESP_RMAKER_DEF_HUE_NAME) == 0) {
-        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
-                 device_name, param_name, val.val.i);
-        app_light_set_hue(val.val.i);
-    } else if (strcmp(param_name, ESP_RMAKER_DEF_SATURATION_NAME) == 0) {
-        ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
-                 device_name, param_name, val.val.i);
-        app_light_set_saturation(val.val.i);
-    } else {
-        ESP_LOGW(TAG, "Ignoring unhandled param: %s", param_name);
-        return ESP_OK;
+    for (uint8_t i = 0; i < count; i++) {
+        const esp_rmaker_param_t *param = write_req[i].param;
+        esp_rmaker_param_val_t val = write_req[i].val;
+        const char *param_name = esp_rmaker_param_get_name(param);
+
+        if (strcmp(param_name, ESP_RMAKER_DEF_POWER_NAME) == 0) {
+            ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %s",
+                     device_name, param_name, val.val.b ? "ON" : "OFF");
+            app_light_set_power(val.val.b);
+        } else if (strcmp(param_name, ESP_RMAKER_DEF_BRIGHTNESS_NAME) == 0) {
+            ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
+                     device_name, param_name, val.val.i);
+            app_light_set_brightness(val.val.i);
+        } else if (strcmp(param_name, ESP_RMAKER_DEF_HUE_NAME) == 0) {
+            ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
+                     device_name, param_name, val.val.i);
+            app_light_set_hue(val.val.i);
+        } else if (strcmp(param_name, ESP_RMAKER_DEF_SATURATION_NAME) == 0) {
+            ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %d",
+                     device_name, param_name, val.val.i);
+            app_light_set_saturation(val.val.i);
+        } else if (strcmp(param_name, "Effect") == 0) {
+            ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %s",
+                     device_name, param_name, val.val.s);
+            app_light_set_effect(val.val.s);
+        } else {
+            ESP_LOGW(TAG, "Ignoring unhandled param: %s", param_name);
+            continue;
+        }
+
+        /* Cập nhật giá trị vào Node Shadow cục bộ */
+        esp_rmaker_param_update(param, val);
     }
 
-    esp_rmaker_param_update_and_report(param, val);
+    /* 
+     * QUAN TRỌNG: Nếu lệnh đến từ Cloud hoặc Local Control (App điện thoại gửi xuống),
+     * Cloud/App đã biết trước giá trị này. Tuyệt đối KHÔNG gọi param_update_and_report
+     * để tránh bắn ngược MQTT publish lên AWS IoT Core khi vuốt nhanh thanh trượt/bảng màu,
+     * dẫn đến cạn kiệt hạn ngạch ("Out of MQTT Budget. Dropping publish message").
+     * Chỉ gọi report khi nguồn thay đổi xuất phát từ nút bấm vật lý / cục bộ trên node.
+     */
+    if (ctx && (ctx->src != ESP_RMAKER_REQ_SRC_CLOUD && ctx->src != ESP_RMAKER_REQ_SRC_LOCAL)) {
+        esp_rmaker_param_update_and_report(write_req[count - 1].param, write_req[count - 1].val);
+    }
+
     return ESP_OK;
 }
 
@@ -119,6 +142,22 @@ static esp_rmaker_ota_diag_status_t app_ota_diagnostic(esp_rmaker_ota_diag_priv_
     return OTA_DIAG_STATUS_SUCCESS;
 }
 
+static void on_wifi_sta_start(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    wifi_country_t country = {
+        .cc = "VN",
+        .schan = 1,
+        .nchan = 13,
+        .policy = WIFI_COUNTRY_POLICY_AUTO,
+    };
+    esp_wifi_set_country(&country);
+
+    /* Không gọi esp_wifi_set_config() tại đây vì Wi-Fi STA đã chuyển sang trạng thái Connecting */
+    esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW20);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_max_tx_power(48); // 12 dBm - chuẩn ổn định cho ESP32-C3 chống sụt áp nguồn RF
+}
+
 void app_main(void)
 {
     esp_err_t err = ESP_OK;
@@ -139,6 +178,9 @@ void app_main(void)
     ESP_LOGI(TAG, "Initializing Wi-Fi Provisioning Netif...");
     app_wifi_init();
 
+    /* Đăng ký Event Handler để tinh chỉnh kết nối ổn định mỗi khi Wi-Fi STA khởi động */
+    esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_START, on_wifi_sta_start, NULL, NULL);
+
     /* 4. Initialize ESP RainMaker Agent */
     ESP_LOGI(TAG, "Initializing ESP RainMaker Node...");
     esp_rmaker_config_t rainmaker_cfg = {
@@ -154,11 +196,22 @@ void app_main(void)
     /* 5. Create Lightbulb device with standard parameters */
     ESP_LOGI(TAG, "Creating standard Lightbulb device and parameters...");
     light_device = esp_rmaker_lightbulb_device_create("Light", NULL, DEFAULT_POWER);
-    esp_rmaker_device_add_cb(light_device, write_cb, NULL);
+    esp_rmaker_device_add_bulk_cb(light_device, write_cb, NULL);
 
     esp_rmaker_device_add_param(light_device, esp_rmaker_brightness_param_create(ESP_RMAKER_DEF_BRIGHTNESS_NAME, DEFAULT_BRIGHTNESS));
     esp_rmaker_device_add_param(light_device, esp_rmaker_hue_param_create(ESP_RMAKER_DEF_HUE_NAME, DEFAULT_HUE));
     esp_rmaker_device_add_param(light_device, esp_rmaker_saturation_param_create(ESP_RMAKER_DEF_SATURATION_NAME, DEFAULT_SATURATION));
+
+    /* Thêm tham số chọn hiệu ứng ánh sáng (Static / Blink / Breathing / Rainbow) */
+    static const char *s_effects[] = {"Static", "Blink", "Breathing", "Rainbow"};
+    esp_rmaker_param_t *effect_param = esp_rmaker_param_create("Effect", "esp.param.mode",
+                                                              esp_rmaker_str("Static"),
+                                                              PROP_FLAG_READ | PROP_FLAG_WRITE);
+    if (effect_param) {
+        esp_rmaker_param_add_ui_type(effect_param, ESP_RMAKER_UI_DROPDOWN);
+        esp_rmaker_param_add_valid_str_list(effect_param, s_effects, sizeof(s_effects) / sizeof(s_effects[0]));
+        esp_rmaker_device_add_param(light_device, effect_param);
+    }
 
     esp_rmaker_node_add_device(node, light_device);
 
@@ -188,7 +241,13 @@ void app_main(void)
 
 
     ESP_LOGI(TAG, "Enabling System Service (Reboot & Factory Reset)...");
-    esp_rmaker_system_service_enable(NULL);
+    esp_rmaker_system_serv_config_t system_serv_config = {
+        .flags = SYSTEM_SERV_FLAG_REBOOT | SYSTEM_SERV_FLAG_FACTORY_RESET,
+        .reboot_seconds = 2,
+        .reset_seconds = 2,
+        .reset_reboot_seconds = 2,
+    };
+    esp_rmaker_system_service_enable(&system_serv_config);
 
     /* 7. Start the ESP RainMaker Agent */
     ESP_LOGI(TAG, "Starting ESP RainMaker Agent...");

@@ -79,7 +79,9 @@ Dự án kích hoạt toàn diện các dịch vụ hệ thống của RainMaker
 - **Offline Scheduling**: Dịch vụ hẹn giờ thông minh lưu trên Flash cục bộ; đèn tự động thực hiện các kịch bản bật/tắt theo giờ định sẵn ngay cả khi bị mất mạng Internet hoặc router cúp điện (`esp_rmaker_schedule_enable`).
 - **OTA Upgrade Service**: Dịch vụ nâng cấp firmware từ xa qua HTTPS kèm cơ chế tự động rollback chống brick thiết bị (`esp_rmaker_ota_enable`).
 - **System Service**: Hỗ trợ khởi động lại và khôi phục cài đặt gốc từ xa qua đám mây (`esp_rmaker_system_service_enable`).
-- **LAN Local Control**: Bật cơ chế điều khiển nội bộ qua LAN (`CONFIG_ESP_RMAKER_LOCAL_CTRL_ENABLE=y`) để app điện thoại tự động chuyển sang chế độ cục bộ khi cùng mạng Wi-Fi, giảm thiểu độ trễ xuống <15ms.
+- **Tối ưu Kênh Điều Khiển Đám Mây Trực Tiếp (Enforce Cloud MQTT)**: Vô hiệu hóa `CONFIG_ESP_RMAKER_LOCAL_CTRL_ENABLE` trên kiến trúc đơn nhân ESP32-C3 để triệt tiêu hiện tượng nghẽn socket bắt tay mật mã (crypto handshake) khi vuốt thanh trượt độ sáng và bánh xe màu tốc độ cao, đồng thời tiết kiệm 91 KB bộ nhớ Flash/RAM. Toàn bộ lệnh điều khiển đi trực tiếp qua AWS IoT Core MQTT dưới 50ms.
+- **Ổn định RF và Kháng Nhiễu Wi-Fi**: Khóa băng thông 20MHz (`WIFI_BW20`), vô hiệu hóa PMF (`pmf_cfg.capable = false`), hạ TX Power xuống 12 dBm để chống sụt áp nguồn RF trên ESP32-C3.
+
 
 ### 1.5. Kế Thừa Phần Cứng Đa Kiến Trúc (Multi-Target Dual-Target Invariant)
 Duy trì sự đồng nhất hoàn hảo với các chương trước:

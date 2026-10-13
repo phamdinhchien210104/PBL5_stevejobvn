@@ -70,6 +70,59 @@ int app_driver_toggle_state(void);
 int app_driver_set_color(uint8_t red, uint8_t green, uint8_t blue);
 
 /**
+ * @brief Get current brightness level (5 - 100%)
+ * 
+ * @return uint8_t brightness percentage
+ */
+uint8_t app_driver_get_brightness(void);
+
+/**
+ * @brief Set brightness level (5 - 100%)
+ * 
+ * @param brightness Target brightness percentage
+ * @return int ESP_OK on success
+ */
+int app_driver_set_brightness(uint8_t brightness);
+
+/**
+ * @brief Increment or decrement brightness level by delta percentage
+ * 
+ * @param delta Positive to increase, negative to decrease (e.g. +10, -10)
+ * @return int ESP_OK on success
+ */
+int app_driver_adjust_brightness(int delta);
+
+/**
+ * @brief Get current color index in 8-color preset table (0 - 7)
+ * 
+ * @return uint8_t color index
+ */
+uint8_t app_driver_get_color_index(void);
+
+/**
+ * @brief Get human-readable name of current color preset
+ * 
+ * @return const char* color name string
+ */
+const char* app_driver_get_color_name(void);
+
+/**
+ * @brief Get current RGB components of color preset
+ * 
+ * @param r Red output pointer
+ * @param g Green output pointer
+ * @param b Blue output pointer
+ */
+void app_driver_get_rgb(uint8_t *r, uint8_t *g, uint8_t *b);
+
+/**
+ * @brief Switch to next color in 8-color preset table (equivalent to Boot double-click)
+ * 
+ * @return int ESP_OK on success
+ */
+int app_driver_next_color(void);
+
+/**
  * @brief Indicate Wi-Fi status via WS2812B NeoPixel 8-bit LED strip
  * 
  * @param status Status enum (CONNECTING, CONNECTED, FAILED)

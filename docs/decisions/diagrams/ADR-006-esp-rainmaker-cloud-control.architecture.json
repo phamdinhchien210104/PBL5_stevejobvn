@@ -38,14 +38,14 @@
     { "id": "rainmaker_app", "type": "frontend", "label": "RainMaker App", "sublabel": "iOS / Android Mobile", "pos": [40, 110], "size": [150, 60] },
     { "id": "aws_cloud", "type": "cloud", "label": "RainMaker Cloud", "sublabel": "AWS IoT Core Broker", "pos": [40, 330], "size": [150, 60] },
     { "id": "ble_prov", "type": "backend", "label": "BLE Provisioning", "sublabel": "NimBLE Assisted Claiming", "pos": [270, 110], "size": [150, 60] },
-    { "id": "local_ctrl", "type": "backend", "label": "LAN Local Control", "sublabel": "mDNS HTTPS Fallback", "pos": [270, 220], "size": [150, 60] },
+    { "id": "local_ctrl", "type": "backend", "label": "Direct MQTT Stream", "sublabel": "TCP Oversize & Priority 10", "pos": [270, 220], "size": [150, 60] },
     { "id": "mqtt_tls", "type": "security", "label": "MQTT TLS Client", "sublabel": "Mutual Auth (Port 8883)", "pos": [270, 330], "size": [150, 60] },
     { "id": "services_mgr", "type": "backend", "label": "Cloud Services", "sublabel": "SNTP / Schedule / OTA", "pos": [610, 80], "size": [160, 60] },
     { "id": "rmaker_core", "type": "backend", "label": "RainMaker Node Core", "sublabel": "Lightbulb Device Node", "pos": [610, 220], "size": [160, 60] },
-    { "id": "device_shadow", "type": "database", "label": "Device Shadow", "sublabel": "TSL Parameters (HSV)", "pos": [610, 360], "size": [160, 60] },
+    { "id": "device_shadow", "type": "database", "label": "Device Shadow", "sublabel": "HSV & Lighting Effects", "pos": [610, 360], "size": [160, 60] },
     { "id": "app_driver", "type": "backend", "label": "app_driver HAL", "sublabel": "State Sync & Gestures", "pos": [870, 220], "size": [160, 60] },
     { "id": "boot_button", "type": "external", "label": "Boot Button HAL", "sublabel": "GPIO 0 (S3) / GPIO 9 (C3)", "pos": [870, 380], "size": [160, 60] },
-    { "id": "light_driver", "type": "backend", "label": "light_driver Layer", "sublabel": "HSV to RGB24 Engine", "pos": [1120, 220], "size": [160, 60] },
+    { "id": "light_driver", "type": "backend", "label": "light_driver Layer", "sublabel": "HSV & Effects Engine", "pos": [1120, 220], "size": [160, 60] },
     { "id": "ws2812_strip", "type": "external", "label": "WS2812B 8-Bit NeoPixel", "sublabel": "Hardware SPI2 DMA (GPIO 4)", "pos": [1120, 380], "size": [160, 60] }
   ],
   "boundaries": [
