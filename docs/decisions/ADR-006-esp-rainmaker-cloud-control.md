@@ -94,6 +94,87 @@ Duy trì sự đồng nhất hoàn hảo với các chương trước:
   * `CONFIG_IDF_TARGET_ESP32S3`: Nút Boot tại **GPIO 0**.
   * `CONFIG_IDF_TARGET_ESP32C3`: Nút Boot tại **GPIO 9**.
 
+### 1.6. Kiến Trúc Đa Nhiệm FreeRTOS & Bộ Máy Làm Mượt 50Hz (Smooth Fading & Multi-Tasking)
+Nhằm mang lại trải nghiệm ánh sáng cao cấp ("chuyển động siêu mượt theo thanh trượt") và triệt tiêu xung đột đa nhiệm trên chip đơn nhân RISC-V ESP32-C3:
+- **FreeRTOS Task Hierarchy**:
+  - `tiT` (Priority 23) & `LwIP` (Priority 18): Đảm bảo các khung truyền Wi-Fi và mạng TCP/IP không bị gián đoạn.
+  - `rmaker_work_queue` (Priority 10 - Boosted): Xử lý tức thì các tập lệnh JSON hàng đợi từ Cloud.
+  - `mqtt_task` (Priority 5) & `rainbow_task` (Priority 5): Duy trì kết nối MQTT và chu kỳ quay màu 50ms.
+- **Bộ máy làm mượt 50Hz (`smooth_fade_timer`)**:
+  - Chạy trên `Tmr Svc` daemon ở tần số 50Hz (chu kỳ 20ms).
+  - Sử dụng thuật toán nội suy làm mượt hàm mũ: $\text{Current} = \text{Current} + (\text{Target} - \text{Current}) \times 0.35$.
+  - Triệt tiêu hoàn toàn độ trễ bước nhảy, giúp ánh sáng chuyển màu và bừng sáng êm dịu theo ngón tay người dùng.
+- **Trì hoãn ghi Flash NVS 1.5s (`lazy_save_timer`)**:
+  - Khi người dùng vuốt liên tục thanh màu, các lệnh không ghi trực tiếp vào NVS Flash để tránh nghẽn CPU và chống mòn chip nhớ.
+  - Sau khi người dùng ngừng thao tác 1.5 giây, timer tự động kích hoạt một lần duy nhất để lưu cấu hình.
+- **Hiệu ứng Ánh sáng Động (`Blink`, `Breathing`, `Rainbow`) & Dynamic Color Tuning**:
+  - Hỗ trợ đổi màu tức thì ngay khi đang chạy hiệu ứng nhấp nháy (`Blink`) hoặc thở (`Breathing`) qua hàm `update_active_effect_color()` mà không làm ngắt hoặc văng chế độ.
+  - Quản lý vòng đời `rainbow_task`: Tạo động bằng `xTaskCreate` khi chọn và tự động thu hồi tài nguyên RAM bằng `vTaskDelete` khi chuyển chế độ hoặc tắt đèn.
+- **Triệt tiêu Xung đột Bật/Tắt (Power Conflict Fallback)**:
+  - Tắt nguồn (`OFF`): Dừng triệt để toàn bộ task/timer hiệu ứng, dọn sạch phần cứng LED (`ws2812_clear()`), lưu trạng thái nhớ `s_current_effect`.
+  - Bật nguồn (`ON`): Tự động khôi phục hiệu ứng đã cấu hình trước đó, hoặc chạy hiệu ứng Soft Fade-in nếu ở chế độ màu tĩnh (`Static`).
+  - Khi đèn đang Tắt: Thao tác đổi màu trên App chỉ lưu cấu hình ngầm vào NVS, không vô tình làm sáng đèn vật lý.
+- **Bảo Vệ Hạn Ngạch MQTT (MQTT Budget Protection)**:
+  - Khi nhận lệnh từ Cloud/App (`ctx->src == ESP_RMAKER_REQ_SRC_CLOUD` hoặc `ESP_RMAKER_REQ_SRC_LOCAL`), thiết bị chỉ gọi `esp_rmaker_param_update()` cập nhật Node Shadow nội bộ mà không gọi `_and_report`, triệt tiêu hoàn toàn lỗi cạn kiệt hạn ngạch `Out of MQTT Budget`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Người dùng (App / Nút BOOT)
+    participant Cloud as AWS IoT Core (Cloud)
+    participant MQTT as mqtt_task (Prio 5)
+    participant WQ as rmaker_work_queue (Prio 10)
+    participant AppDriver as app_driver (Logic)
+    participant TmrSvc as Timer Daemon ('Tmr Svc')
+    participant TaskEff as rainbow_task (Prio 5)
+    participant HW as WS2812B (SPI DMA Hardware)
+    participant NVS as NVS Flash (app_storage)
+
+    rect rgb(235, 245, 255)
+    note over User, NVS: KỊCH BẢN 1: Vuốt slider Hue / Brightness liên tục từ App RainMaker
+    User->>Cloud: Vuốt slider (Gửi 10-20 lệnh/giây)
+    Cloud->>MQTT: Downlink MQTT Publish (JSON params)
+    MQTT->>WQ: Đẩy vào Queue xử lý ưu tiên (Prio 10)
+    WQ->>AppDriver: write_cb() -> app_light_set_hue() / set_brightness()
+    Note over WQ: Cập nhật Shadow cục bộ (KHÔNG bắn MQTT echo lên AWS)
+    AppDriver->>TmrSvc: xTimerStart("smooth_fade", 20ms) & xTimerReset("lazy_save", 1.5s)
+    loop Chu kỳ 50Hz (20ms/bước) trong lúc đang vuốt
+        TmrSvc->>HW: Nội suy 0.35Δ -> ws2812_set_all() + refresh() (Chuyển màu siêu êm)
+    end
+    User->>User: Dừng vuốt tay -> TmrSvc đạt mục tiêu -> xTimerStop("smooth_fade")
+    TmrSvc->>NVS: 1.5s sau: lazy_save_timer_cb() -> Lưu H, S, V xuống NVS Flash
+    end
+
+    rect rgb(245, 255, 240)
+    note over User, NVS: KỊCH BẢN 2: Chọn hiệu ứng "Rainbow" và "Breathing" có chỉnh màu động
+    User->>WQ: Chọn Effect: "Rainbow"
+    WQ->>AppDriver: app_light_set_effect("Rainbow")
+    AppDriver->>TaskEff: xTaskCreate("rainbow_task", Prio 5)
+    loop Mỗi 50ms
+        TaskEff->>HW: Hue = (Hue + 5) % 360 -> ws2812_refresh()
+    end
+    User->>WQ: Đổi sang Effect: "Breathing"
+    WQ->>AppDriver: app_light_set_effect("Breathing")
+    AppDriver->>TaskEff: vTaskDelete("rainbow_task") (Hủy Task, giải phóng RAM)
+    AppDriver->>TmrSvc: xTimerStart("eff_timer", 30ms chu kỳ sin)
+    TmrSvc->>HW: Đèn thở nhịp nhàng (Breathing)
+    User->>WQ: Chỉnh Hue sang Xanh Dương trong khi đang Breathing
+    WQ->>AppDriver: app_light_set_hue(240)
+    AppDriver->>TmrSvc: update_active_effect_color() -> Cập nhật màu nền mới
+    Note over TmrSvc, HW: Tiếp tục thở bằng màu Xanh Dương (KHÔNG ngắt hiệu ứng)
+    end
+
+    rect rgb(255, 240, 240)
+    note over User, NVS: KỊCH BẢN 3: Nhấn nút Power OFF (Từ App hoặc Nút cứng BOOT)
+    User->>AppDriver: Power = OFF (Nút bấm GPIO 9 hoặc App RainMaker)
+    AppDriver->>AppDriver: Lưu nhớ effect gần nhất: s_current_effect = "Breathing"
+    AppDriver->>TaskEff: Dừng rainbow_task (nếu có)
+    AppDriver->>TmrSvc: xTimerStop("eff_timer") & xTimerStop("smooth_fade")
+    AppDriver->>HW: ws2812_clear() + ws2812_refresh() (Tắt triệt để LED vật lý)
+    AppDriver->>NVS: Lưu trạng thái Switch: OFF
+    end
+```
+
 ---
 
 ## 2. Hệ Quả & Đánh Giá (Consequences & Trade-offs)
@@ -103,6 +184,7 @@ Duy trì sự đồng nhất hoàn hảo với các chương trước:
 2. **Bảo mật chuẩn công nghiệp**: Mọi luồng giao tiếp dữ liệu đều được mã hóa bằng TLS 1.2/1.3 với chứng chỉ X.509 riêng biệt cho từng thiết bị lưu trong phân vùng `fctry`.
 3. **Tính độc lập & toàn vẹn Monorepo**: Thư mục dùng chung `device_firmware/components/` được bảo vệ nguyên vẹn 100%, không bị ảnh hưởng bởi sự thay đổi phiên bản của các thư viện ngoài.
 4. **Khả năng tự phục hồi & cập nhật an toàn**: Bảng phân vùng 1920KB đảm bảo đủ không gian cho 2 phân vùng chạy song song (Active / Inactive OTA) với cơ chế Rollback chống treo mạch.
+5. **Hiệu năng & Độ êm tuyệt đối**: Chuyển động mượt mà 50Hz, không lag, không cạn kiệt budget MQTT, bảo vệ tuổi thọ chip Flash tối đa.
 
 ### Đánh đổi (Trade-offs & Mitigations)
 - **Dung lượng Flash lớn**: Firmware chiếm ~1.78MB trên Flash 4MB. Điều này đã được khắc phục hoàn toàn bằng cách tối ưu bảng phân vùng lên 1920KB (dư 9% không gian trống) và bật cơ chế giải phóng bộ nhớ tạm TLS (`CONFIG_MBEDTLS_DYNAMIC_BUFFER=y`).
