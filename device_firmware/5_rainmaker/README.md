@@ -10,6 +10,40 @@
 
 ---
 
+## Demo OTA tuần này (ESP-IDF v6.0.3)
+
+Xem [OTA_DEMO.md](OTA_DEMO.md) để build firmware A/B, kiểm tra quyền node trên
+RainMaker Dashboard, upload firmware và tạo OTA task. Firmware hiện dùng
+`esp_rmaker_ota_enable_default()` (**OTA_USING_TOPICS**) cho OTA từ Dashboard;
+file tải qua HTTPS với certificate bundle. Các mô tả phiên bản/cấu hình ở phần
+tài liệu chương 9 bên dưới là thông tin lịch sử của bài thực hành trước.
+
+Demo hiện phân biệt chức năng bằng tùy chọn CMake `APP_ENABLE_POLICE_EFFECT`:
+A `1.0.0` build với OFF có bốn hiệu ứng cũ; B `1.1.0` build với ON bổ sung **Police**
+đỏ–xanh luân phiên mỗi 250 ms. Danh sách Effect tự phản ánh tính năng có trong từng
+firmware. Xem lệnh build đầy đủ, log nhận biết và bảng kiểm tra các chức năng cũ
+trong `OTA_DEMO.md`; đổi riêng số phiên bản không tự bật Police.
+
+### Hướng dẫn nhóm tự test OTA qua Dashboard
+
+Làm theo [OTA_DEMO.md](OTA_DEMO.md) theo thứ tự:
+
+1. **Mục 3:** build/flash A `1.0.0`, Police OFF; xác nhận node Online và điều khiển đèn được.
+2. **Mục 4:** mở ESP-IDF Terminal khác, build B `1.1.0`, Police ON, dùng
+   `esptool image-info` kiểm tra phiên bản thực trong `.bin`; không flash B bằng USB.
+3. **Mục 5.1:** **Firmware images → + → Add firmware image**; có bảng điền Basic details,
+   Secure signing, Firmware version & model và tùy chọn raw theo giao diện Classic.
+4. **Mục 5.2–5.3:** **Start OTA → Select from your nodes → Force push → tạo job**,
+   theo dõi tại **OTA jobs**.
+5. **Mục 6:** kiểm chứng trực tiếp bằng **Nodes hiển thị 1.1.0/Online**, app có Police
+   và đèn chạy đỏ–xanh; có bảng kiểm thử, bằng chứng cần lưu và cách demo lại.
+
+Đã ghi cách xử lý lỗi thực tế **Same version received** do chọn nhầm file A rồi đặt
+nhãn Dashboard là `1.1.0`. Nhãn image không đổi phiên bản bên trong binary.
+Người thực hành đã xác nhận Police trên app/đèn sau cập nhật; các thành viên cần chạy
+lại và lưu kết quả riêng. Dùng ESP-IDF **v6.0.3** cho hướng dẫn OTA này; thông tin
+v6.0.2 ở phần bài chương 9 bên dưới là tài liệu lịch sử.
+
 ## 1. So Sánh Kiến Trúc: Mã Nguồn Cũ vs Mã Nguồn Cải Tiến Chuẩn PBL5
 
 | Thành phần / Tiêu chí | Mã nguồn gốc trong sách (Cũ) | Mã nguồn cải tiến chuẩn PBL5 (Mới) |
@@ -36,7 +70,7 @@
 3. **Kích hoạt Dịch vụ Đồng bộ & Ngoại tuyến**:
    - `esp_rmaker_time_sync_init()` & `esp_rmaker_timezone_service_enable()`: Lấy giờ chuẩn quốc tế để phục vụ hẹn giờ.
    - `esp_rmaker_schedule_enable()`: Hẹn giờ bật/tắt cục bộ ngay trên chip (kể cả khi mất mạng Wi-Fi/Internet đèn vẫn chạy đúng lịch).
-   - `esp_rmaker_ota_enable()`: Cập nhật OTA an toàn qua chứng chỉ `ota_server_cert`.
+    - `esp_rmaker_ota_enable_default()`: OTA task từ Dashboard qua topics, tải firmware bằng HTTPS và certificate bundle.
    - `esp_rmaker_system_service_enable()`: Cho phép khởi động lại và reset từ xa.
 4. **Đồng bộ Phần Cứng & Device Shadow ([`app_driver.c`](main/app_driver.c))**:
    - Nút Boot HAL (S3 GPIO 0 / C3 GPIO 9):

@@ -10,11 +10,13 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include "esp_log.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "freertos/timers.h"
 
 #include "iot_button.h"
 #include "light_driver.h"
@@ -43,8 +45,28 @@ static const uint16_t s_preset_hues[] = {0, 60, 120, 180, 240, 300};
 #define NUM_PRESET_HUES (sizeof(s_preset_hues) / sizeof(s_preset_hues[0]))
 static size_t s_hue_index = 0;
 static char s_current_effect[16] = "Static";
+static const char *s_effect_names[] = {
+    "Static", "Blink", "Breathing", "Rainbow",
+#if APP_ENABLE_POLICE_EFFECT
+    "Police",
+#endif
+};
+
+const char **app_light_get_effect_names(size_t *count)
+{
+    if (count) {
+        *count = sizeof(s_effect_names) / sizeof(s_effect_names[0]);
+    }
+    return s_effect_names;
+}
+
+static bool is_animated_effect(void)
+{
+    return strcmp(s_current_effect, "Static") != 0;
+}
 
 static void stop_rainbow_task(void);
+static void stop_police_timer(void);
 
 static void push_btn_cb(void *arg)
 {
@@ -174,9 +196,7 @@ static void lazy_save_timer_cb(TimerHandle_t xTimer)
 {
     ESP_LOGI(TAG, "[Lazy Save] Persisting light state to NVS: H=%d, S=%d, B=%d",
              g_hue, g_saturation, g_brightness);
-    if (strcasecmp(s_current_effect, "Blink") == 0 ||
-        strcasecmp(s_current_effect, "Breathing") == 0 ||
-        strcasecmp(s_current_effect, "Rainbow") == 0) {
+    if (is_animated_effect()) {
         /* Đang chạy hiệu ứng: Không gọi light_driver_set_hsv để tránh ngắt hiệu ứng */
         return;
     }
@@ -232,10 +252,8 @@ static void smooth_fade_timer_cb(TimerHandle_t xTimer)
         s_current_sat = s_target_sat;
     }
 
-    /* Nếu đang trong hiệu ứng Blink hoặc Breathing, không xuất màu tĩnh đè lên hiệu ứng */
-    if (strcasecmp(s_current_effect, "Blink") == 0 ||
-        strcasecmp(s_current_effect, "Breathing") == 0 ||
-        strcasecmp(s_current_effect, "Rainbow") == 0) {
+    /* Không xuất màu tĩnh đè lên hiệu ứng đang chạy, kể cả Police của bản B. */
+    if (is_animated_effect()) {
         if (!is_busy) {
             xTimerStop(s_smooth_fade_timer, 0);
         }
@@ -272,6 +290,7 @@ esp_err_t app_light_set_power(bool power)
     if (!power) {
         /* POWER OFF: Dừng triệt để tất cả hiệu ứng nền và xóa LED vật lý */
         stop_rainbow_task();
+        stop_police_timer();
         light_driver_blink_stop();
         light_driver_breath_stop();
         if (s_smooth_fade_timer != NULL) {
@@ -281,10 +300,8 @@ esp_err_t app_light_set_power(bool power)
     } else {
         /* POWER ON: Khôi phục hiệu ứng đã cấu hình hoặc hiển thị màu tĩnh gần nhất */
         light_driver_set_switch(true);
-        if (strcasecmp(s_current_effect, "Rainbow") == 0 ||
-            strcasecmp(s_current_effect, "Blink") == 0 ||
-            strcasecmp(s_current_effect, "Breathing") == 0) {
-            app_light_set_effect(s_current_effect);
+        if (is_animated_effect()) {
+            return app_light_set_effect(s_current_effect);
         } else {
             /* Hiển thị tĩnh: đồng bộ giá trị float nội suy và kích hoạt fade mượt */
             s_current_brightness = 0.0f; // Hiệu ứng bừng sáng êm khi vừa bật nguồn
@@ -405,13 +422,85 @@ static void stop_rainbow_task(void)
     }
 }
 
+#if APP_ENABLE_POLICE_EFFECT
+static TimerHandle_t s_police_timer = NULL;
+static bool s_police_blue_phase = false;
+
+static void police_effect_timer_cb(TimerHandle_t timer)
+{
+    /* Ignore a queued callback after power-off or a switch to another effect. */
+    if (!g_output_state || strcmp(s_current_effect, "Police") != 0) {
+        return;
+    }
+    uint8_t brightness = g_brightness > 100 ? 100 : g_brightness;
+    uint8_t level = (uint8_t)(brightness * 255U / 100U);
+    ws2812_set_all(s_police_blue_phase ? 0 : level, 0, s_police_blue_phase ? level : 0);
+    ws2812_refresh();
+    s_police_blue_phase = !s_police_blue_phase;
+}
+
+static esp_err_t start_police_timer(void)
+{
+    if (s_police_timer == NULL) {
+        s_police_timer = xTimerCreate("police", pdMS_TO_TICKS(250), pdTRUE, NULL, police_effect_timer_cb);
+    }
+    if (s_police_timer == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    if (xTimerReset(s_police_timer, 0) != pdPASS) {
+        return ESP_FAIL;
+    }
+    s_police_blue_phase = false;
+    return ESP_OK;
+}
+#endif
+
+static void stop_police_timer(void)
+{
+#if APP_ENABLE_POLICE_EFFECT
+    if (s_police_timer != NULL) {
+        xTimerStop(s_police_timer, 0);
+    }
+#endif
+}
+
 esp_err_t app_light_set_effect(const char *effect)
 {
     if (!effect) return ESP_ERR_INVALID_ARG;
-    ESP_LOGI(TAG, "app_light_set_effect: '%s'", effect);
 
-    strncpy(s_current_effect, effect, sizeof(s_current_effect) - 1);
-    s_current_effect[sizeof(s_current_effect) - 1] = '\0';
+    /* Canonical names come from the same list advertised to RainMaker. This also
+     * avoids overlapping strncpy when Power ON restores s_current_effect.
+     */
+    const char *selected = NULL;
+    for (size_t i = 0; i < sizeof(s_effect_names) / sizeof(s_effect_names[0]); ++i) {
+        if (strcasecmp(effect, s_effect_names[i]) == 0) {
+            selected = s_effect_names[i];
+            break;
+        }
+    }
+    if (selected == NULL) {
+        ESP_LOGW(TAG, "Unsupported effect: '%s'", effect);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+#if APP_ENABLE_POLICE_EFFECT
+    /* Reserve/start the timer before changing modes so a failure leaves the
+     * existing effect selected. Its callback waits for the Police mode below.
+     */
+    if (g_output_state && strcmp(selected, "Police") == 0) {
+        esp_err_t err = start_police_timer();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Cannot start Police effect: %s", esp_err_to_name(err));
+            return err;
+        }
+    } else
+#endif
+    {
+        stop_police_timer();
+    }
+
+    ESP_LOGI(TAG, "app_light_set_effect: '%s'", selected);
+    strcpy(s_current_effect, selected);
 
     stop_rainbow_task();
 
@@ -429,18 +518,26 @@ esp_err_t app_light_set_effect(const char *effect)
         r = 0; g = 255; b = 255;
     }
 
-    if (strcasecmp(effect, "Blink") == 0) {
+    if (strcmp(selected, "Blink") == 0) {
         light_driver_breath_stop();
         light_driver_blink_start(r, g, b);
-    } else if (strcasecmp(effect, "Breathing") == 0) {
+    } else if (strcmp(selected, "Breathing") == 0) {
         light_driver_blink_stop();
         light_driver_breath_start(r, g, b);
-    } else if (strcasecmp(effect, "Rainbow") == 0) {
+    } else if (strcmp(selected, "Rainbow") == 0) {
         light_driver_blink_stop();
         light_driver_breath_stop();
         if (s_rainbow_task_handle == NULL) {
             xTaskCreate(rainbow_effect_task, "rainbow_task", 2048, NULL, 5, &s_rainbow_task_handle);
         }
+#if APP_ENABLE_POLICE_EFFECT
+    } else if (strcmp(selected, "Police") == 0) {
+        light_driver_blink_stop();
+        light_driver_breath_stop();
+        /* The timer writes RGB frames directly, preserving the selected HSV
+         * and avoiding NVS writes on every colour change.
+         */
+#endif
     } else {
         /* "Static" hoặc chế độ thường: Dừng tất cả hiệu ứng và hiển thị màu tĩnh */
         light_driver_blink_stop();

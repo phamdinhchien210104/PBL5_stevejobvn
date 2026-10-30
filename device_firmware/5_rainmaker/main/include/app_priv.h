@@ -16,6 +16,7 @@
 #define __APP_PRIVATE_H__
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
 
@@ -23,6 +24,10 @@
 #define DEFAULT_HUE         180
 #define DEFAULT_SATURATION  100
 #define DEFAULT_BRIGHTNESS  25
+
+#ifndef APP_ENABLE_POLICE_EFFECT
+#define APP_ENABLE_POLICE_EFFECT 0
+#endif
 
 /**
  * @brief Initialize application driver (WS2812B Hardware SPI2 DMA + Boot Button HAL)
@@ -65,7 +70,13 @@ esp_err_t app_light_set_hue(uint16_t hue);
 esp_err_t app_light_set_saturation(uint16_t saturation);
  
 /**
- * @brief Set light effect mode ("Static", "Blink", "Breathing", "Rainbow")
+ * @brief Get the effect names supported by this firmware build.
+ * Police is included only when APP_ENABLE_POLICE_EFFECT is enabled.
+ */
+const char **app_light_get_effect_names(size_t *count);
+
+/**
+ * @brief Set a supported effect; unknown names are rejected without changing mode.
  */
 esp_err_t app_light_set_effect(const char *effect);
 

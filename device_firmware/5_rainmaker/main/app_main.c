@@ -24,6 +24,8 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_app_desc.h"
+#include "esp_ota_ops.h"
 #include "nvs_flash.h"
 
 #include "lwip/sockets.h"
@@ -45,8 +47,6 @@
 static const char *TAG = "rainmaker";
 
 esp_rmaker_device_t *light_device;
-
-extern const char ota_server_cert[] asm("_binary_server_crt_start");
 
 /* Callback xử lý tập lệnh từ Cloud/App RainMaker theo cơ chế Bulk Write tránh giật lag UI */
 static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_param_write_req_t write_req[],
@@ -81,7 +81,11 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
         } else if (strcmp(param_name, "Effect") == 0) {
             ESP_LOGI(TAG, "==> [Cloud Downlink] %s - %s: %s",
                      device_name, param_name, val.val.s);
-            app_light_set_effect(val.val.s);
+            esp_err_t effect_err = app_light_set_effect(val.val.s);
+            if (effect_err != ESP_OK) {
+                ESP_LOGW(TAG, "Effect request rejected: %s", esp_err_to_name(effect_err));
+                return effect_err;
+            }
         } else {
             ESP_LOGW(TAG, "Ignoring unhandled param: %s", param_name);
             continue;
@@ -129,6 +133,12 @@ void app_main(void)
     ESP_LOGI(TAG, "  ESP RainMaker Smart Light Firmware (Chapter 9) Initializing ");
     ESP_LOGI(TAG, "==========================================================");
 
+    const esp_app_desc_t *app = esp_app_get_description();
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    ESP_LOGI(TAG, "Running project=%s version=%s ESP-IDF=%s partition=%s",
+              app->project_name, app->version, app->idf_ver, running->label);
+    ESP_LOGI(TAG, "Police effect: %s", APP_ENABLE_POLICE_EFFECT ? "enabled" : "disabled");
+
     /* 1. NVS Flash initialization */
     ESP_LOGI(TAG, "NVS Flash initialization...");
     app_storage_init();
@@ -165,14 +175,15 @@ void app_main(void)
     esp_rmaker_device_add_param(light_device, esp_rmaker_hue_param_create(ESP_RMAKER_DEF_HUE_NAME, DEFAULT_HUE));
     esp_rmaker_device_add_param(light_device, esp_rmaker_saturation_param_create(ESP_RMAKER_DEF_SATURATION_NAME, DEFAULT_SATURATION));
 
-    /* Thêm tham số chọn hiệu ứng ánh sáng (Static / Blink / Breathing / Rainbow) */
-    static const char *s_effects[] = {"Static", "Blink", "Breathing", "Rainbow"};
+    /* Firmware A advertises four effects; firmware B adds Police. */
+    size_t effect_count = 0;
+    const char **effects = app_light_get_effect_names(&effect_count);
     esp_rmaker_param_t *effect_param = esp_rmaker_param_create("Effect", "esp.param.mode",
                                                               esp_rmaker_str("Static"),
                                                               PROP_FLAG_READ | PROP_FLAG_WRITE);
     if (effect_param) {
         esp_rmaker_param_add_ui_type(effect_param, ESP_RMAKER_UI_DROPDOWN);
-        esp_rmaker_param_add_valid_str_list(effect_param, s_effects, sizeof(s_effects) / sizeof(s_effects[0]));
+        esp_rmaker_param_add_valid_str_list(effect_param, effects, effect_count);
         esp_rmaker_device_add_param(light_device, effect_param);
     }
 
@@ -189,11 +200,11 @@ void app_main(void)
     ESP_LOGI(TAG, "Enabling Offline Scheduling Service...");
     esp_rmaker_schedule_enable();
 
-    ESP_LOGI(TAG, "Enabling OTA Upgrade Service...");
-    esp_rmaker_ota_config_t ota_config = {
-        .server_cert = ota_server_cert,
-    };
-    esp_rmaker_ota_enable(&ota_config, OTA_USING_PARAMS);
+    /* Dashboard OTA jobs use MQTT topics for notification, HTTPS for the image.
+     * The default helper selects OTA_USING_TOPICS and the standard server trust.
+     */
+    ESP_LOGI(TAG, "Enabling RainMaker Dashboard OTA (topics + HTTPS)...");
+    ESP_ERROR_CHECK(esp_rmaker_ota_enable_default());
 
     ESP_LOGI(TAG, "Enabling System Service (Reboot & Factory Reset)...");
     esp_rmaker_system_serv_config_t system_serv_config = {

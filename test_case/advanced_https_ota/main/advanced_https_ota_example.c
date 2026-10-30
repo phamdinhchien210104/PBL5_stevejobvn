@@ -1,219 +1,192 @@
-/* Advanced HTTPS OTA example
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
+/* Local HTTPS OTA demo, based on Espressif's public-domain advanced OTA example. */
+#include <inttypes.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
+#include <time.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/event_groups.h"
-#include "esp_system.h"
+#include "esp_app_desc.h"
 #include "esp_event.h"
-#include "esp_log.h"
-#include "esp_ota_ops.h"
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
-#include "nvs.h"
+#include "esp_log.h"
+#include "esp_netif.h"
+#include "esp_ota_ops.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include "protocol_examples_common.h"
 
-#if CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK
-#include "esp_efuse.h"
-#endif
-
-#if CONFIG_EXAMPLE_CONNECT_WIFI
-#include "esp_wifi.h"
-#endif
-
-static const char *TAG = "advanced_https_ota_example";
+static const char *TAG = "local_ota";
 extern const uint8_t server_cert_pem_start[] asm("_binary_ca_cert_pem_start");
-extern const uint8_t server_cert_pem_end[] asm("_binary_ca_cert_pem_end");
 
-#define OTA_URL_SIZE 256
-
-static esp_err_t validate_image_header(esp_app_desc_t *new_app_info)
+static void log_running_firmware(void)
 {
-    if (new_app_info == NULL) {
+    const esp_app_desc_t *app = esp_app_get_description();
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    ESP_LOGI(TAG, "Running project=%s version=%s ESP-IDF=%s", app->project_name,
+             app->version, app->idf_ver);
+    ESP_LOGI(TAG, "Running partition=%s address=0x%08" PRIx32,
+             running->label, running->address);
+}
+
+/* A local-only demo need not depend on an Internet NTP server. Until real time
+ * is available, use the build timestamp to check the local certificate dates.
+ * Generate certificates before building A/B. Production should use trusted time.
+ */
+static void seed_demo_clock(void)
+{
+    if (time(NULL) >= 1704067200) { /* Already set to 2024 or later. */
+        return;
+    }
+    const esp_app_desc_t *app = esp_app_get_description();
+    struct tm build_time = { .tm_isdst = -1 };
+    char timestamp[64];
+    snprintf(timestamp, sizeof(timestamp), "%s %s", app->date, app->time);
+    if (strptime(timestamp, "%b %d %Y %H:%M:%S", &build_time) != NULL) {
+        struct timeval tv = { .tv_sec = mktime(&build_time) };
+        if (settimeofday(&tv, NULL) == 0) {
+            ESP_LOGW(TAG, "Demo TLS clock seeded from firmware build time: %s", timestamp);
+        }
+    }
+}
+
+static esp_err_t validate_image_header(const esp_app_desc_t *incoming)
+{
+    const esp_app_desc_t *running = esp_app_get_description();
+    ESP_LOGI(TAG, "Offered project=%.*s version=%.*s", (int)sizeof(incoming->project_name),
+             incoming->project_name, (int)sizeof(incoming->version), incoming->version);
+    if (strncmp(incoming->project_name, running->project_name, sizeof(incoming->project_name)) != 0) {
+        ESP_LOGE(TAG, "Rejected: firmware belongs to a different project");
         return ESP_ERR_INVALID_ARG;
     }
-
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    esp_app_desc_t running_app_info;
-    if (esp_ota_get_partition_description(running, &running_app_info) == ESP_OK) {
-        ESP_LOGI(TAG, "Running firmware version: %s", running_app_info.version);
+    if (strncmp(incoming->version, running->version, sizeof(incoming->version)) == 0) {
+        ESP_LOGI(TAG, "Same version; keeping the running firmware");
+        return ESP_ERR_INVALID_VERSION;
     }
-
-#ifndef CONFIG_EXAMPLE_SKIP_VERSION_CHECK
-    if (memcmp(new_app_info->version, running_app_info.version, sizeof(new_app_info->version)) == 0) {
-        ESP_LOGW(TAG, "Current running version is the same as a new. We will not continue the update.");
-        return ESP_FAIL;
-    }
-#endif
-
-#ifdef CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK
-    /**
-     * Secure version check from firmware image header prevents subsequent download and flash write of
-     * entire firmware image. However this is optional because it is also taken care in API
-     * esp_https_ota_finish at the end of OTA update procedure.
-     */
-    const uint32_t hw_sec_version = esp_efuse_read_secure_version();
-    if (new_app_info->secure_version < hw_sec_version) {
-        ESP_LOGW(TAG, "New firmware security version is less than eFuse programmed, %d < %d", new_app_info->secure_version, hw_sec_version);
-        return ESP_FAIL;
-    }
-#endif
-
     return ESP_OK;
 }
 
-static esp_err_t _http_client_init_cb(esp_http_client_handle_t http_client)
+static esp_err_t perform_update(void)
 {
-    esp_err_t err = ESP_OK;
-    /* Uncomment to add custom headers to HTTP request */
-    // err = esp_http_client_set_header(http_client, "Custom-Header", "Value");
-    return err;
-}
+    if (strncmp(CONFIG_EXAMPLE_FIRMWARE_UPGRADE_URL, "https://", 8) != 0) {
+        ESP_LOGE(TAG, "Configure an https:// firmware URL in menuconfig");
+        return ESP_ERR_INVALID_ARG;
+    }
+    const esp_partition_t *target = esp_ota_get_next_update_partition(NULL);
+    if (target == NULL) {
+        ESP_LOGE(TAG, "No OTA slot. Flash the demo partition table over USB first");
+        return ESP_ERR_NOT_FOUND;
+    }
+    ESP_LOGI(TAG, "Checking %s", CONFIG_EXAMPLE_FIRMWARE_UPGRADE_URL);
+    ESP_LOGI(TAG, "Update target=%s capacity=%" PRIu32 " bytes", target->label, target->size);
 
-void advanced_ota_example_task(void *pvParameter)
-{
-    ESP_LOGI(TAG, "Starting Advanced OTA example");
-
-    esp_err_t ota_finish_err = ESP_OK;
-    esp_http_client_config_t config = {
+    esp_http_client_config_t http_config = {
         .url = CONFIG_EXAMPLE_FIRMWARE_UPGRADE_URL,
-        .cert_pem = (char *)server_cert_pem_start,
+        .cert_pem = (const char *)server_cert_pem_start,
         .timeout_ms = CONFIG_EXAMPLE_OTA_RECV_TIMEOUT,
         .keep_alive_enable = true,
     };
-
-#ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_URL_FROM_STDIN
-    char url_buf[OTA_URL_SIZE];
-    if (strcmp(config.url, "FROM_STDIN") == 0) {
-        example_configure_stdin_stdout();
-        fgets(url_buf, OTA_URL_SIZE, stdin);
-        int len = strlen(url_buf);
-        url_buf[len - 1] = '\0';
-        config.url = url_buf;
-    } else {
-        ESP_LOGE(TAG, "Configuration mismatch: wrong firmware upgrade image url");
-        abort();
-    }
-#endif
-
-#ifdef CONFIG_EXAMPLE_SKIP_COMMON_NAME_CHECK
-    config.skip_cert_common_name_check = true;
-#endif
-
-    esp_https_ota_config_t ota_config = {
-        .http_config = &config,
-        .http_client_init_cb = _http_client_init_cb, // Register a callback to be invoked after esp_http_client is initialized
-    };
-
-    esp_https_ota_handle_t https_ota_handle = NULL;
-    esp_err_t err = esp_https_ota_begin(&ota_config, &https_ota_handle);
+    esp_https_ota_config_t ota_config = { .http_config = &http_config };
+    esp_https_ota_handle_t handle = NULL;
+    esp_err_t err = esp_https_ota_begin(&ota_config, &handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "ESP HTTPS OTA Begin failed");
-        vTaskDelete(NULL);
+        ESP_LOGE(TAG, "OTA begin failed: %s", esp_err_to_name(err));
+        return err;
     }
 
-    esp_app_desc_t app_desc;
-    err = esp_https_ota_get_img_desc(https_ota_handle, &app_desc);
+    esp_app_desc_t incoming;
+    err = esp_https_ota_get_img_desc(handle, &incoming);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_https_ota_read_img_desc failed");
-        goto ota_end;
+        ESP_LOGE(TAG, "Cannot read image descriptor: %s", esp_err_to_name(err));
+        goto abort_update;
     }
-    err = validate_image_header(&app_desc);
+    err = validate_image_header(&incoming);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "image header verification failed");
-        goto ota_end;
+        goto abort_update;
     }
 
-    while (1) {
-        err = esp_https_ota_perform(https_ota_handle);
-        if (err != ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
-            break;
-        }
-        // esp_https_ota_perform returns after every read operation which gives user the ability to
-        // monitor the status of OTA upgrade by calling esp_https_ota_get_image_len_read, which gives length of image
-        // data read so far.
-        ESP_LOGD(TAG, "Image bytes read: %d", esp_https_ota_get_image_len_read(https_ota_handle));
-    }
-
-    if (esp_https_ota_is_complete_data_received(https_ota_handle) != true) {
-        // the OTA image was not completely received and user can customise the response to this situation.
-        ESP_LOGE(TAG, "Complete data was not received.");
-    } else {
-        ota_finish_err = esp_https_ota_finish(https_ota_handle);
-        if ((err == ESP_OK) && (ota_finish_err == ESP_OK)) {
-            ESP_LOGI(TAG, "ESP_HTTPS_OTA upgrade successful. Rebooting ...");
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-            esp_restart();
-        } else {
-            if (ota_finish_err == ESP_ERR_OTA_VALIDATE_FAILED) {
-                ESP_LOGE(TAG, "Image validation failed, image is corrupted");
+    int last_progress = -10;
+    int last_bytes = 0;
+    const int image_size = esp_https_ota_get_image_size(handle);
+    do {
+        err = esp_https_ota_perform(handle);
+        const int received = esp_https_ota_get_image_len_read(handle);
+        if (image_size > 0) {
+            int progress = (int)((int64_t)received * 100 / image_size);
+            if (progress >= last_progress + 10) {
+                ESP_LOGI(TAG, "Download %d%% (%d/%d bytes)", progress, received, image_size);
+                last_progress = progress;
             }
-            ESP_LOGE(TAG, "ESP_HTTPS_OTA upgrade failed 0x%x", ota_finish_err);
-            vTaskDelete(NULL);
+        } else if (received - last_bytes >= 65536) {
+            ESP_LOGI(TAG, "Downloaded %d bytes", received);
+            last_bytes = received;
         }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    } while (err == ESP_ERR_HTTPS_OTA_IN_PROGRESS);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Download failed: %s", esp_err_to_name(err));
+        goto abort_update;
+    }
+    if (!esp_https_ota_is_complete_data_received(handle)) {
+        ESP_LOGE(TAG, "Incomplete image; keeping the running firmware");
+        err = ESP_ERR_INVALID_SIZE;
+        goto abort_update;
     }
 
-ota_end:
-    esp_https_ota_abort(https_ota_handle);
-    ESP_LOGE(TAG, "ESP_HTTPS_OTA upgrade failed");
-    vTaskDelete(NULL);
+    /* finish() frees the handle, including on failure: do not abort it again. */
+    err = esp_https_ota_finish(handle);
+    if (err == ESP_OK) {
+        const esp_partition_t *boot = esp_ota_get_boot_partition();
+        ESP_LOGI(TAG, "OTA SUCCESS. Next boot=%s. Restarting...", boot->label);
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        esp_restart();
+    }
+    ESP_LOGE(TAG, "Image validation/finalization failed: %s", esp_err_to_name(err));
+    return err;
+
+abort_update:
+    esp_https_ota_abort(handle);
+    return err;
+}
+
+static void ota_task(void *arg)
+{
+    while (1) {
+        ESP_LOGI(TAG, "Next OTA check in %d seconds", CONFIG_EXAMPLE_OTA_CHECK_INTERVAL);
+        vTaskDelay(pdMS_TO_TICKS(CONFIG_EXAMPLE_OTA_CHECK_INTERVAL * 1000));
+        perform_update();
+    }
 }
 
 void app_main(void)
 {
-    // Initialize NVS.
+    log_running_firmware();
+    seed_demo_clock();
+    /* For this demo rollback is off by default. Support a user-enabled rollback
+     * configuration without leaving the new image pending on every boot.
+     */
+#ifdef CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    esp_ota_img_states_t state;
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
+        ESP_ERROR_CHECK(esp_ota_mark_app_valid_cancel_rollback());
+    }
+#endif
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        // 1.OTA app partition table has a smaller NVS partition size than the non-OTA
-        // partition table. This size mismatch may cause NVS initialization to fail.
-        // 2.NVS partition contains data in new format and cannot be recognized by this version of code.
-        // If this happens, we erase NVS partition and initialize NVS again.
         ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
     }
-    ESP_ERROR_CHECK( err );
-
+    ESP_ERROR_CHECK(err);
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-    /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
-     * Read "Establishing Wi-Fi or Ethernet Connection" section in
-     * examples/protocols/README.md for more information about this function.
-    */
     ESP_ERROR_CHECK(example_connect());
-
-#if defined(CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE) && defined(CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK)
-    /**
-     * We are treating successful WiFi connection as a checkpoint to cancel rollback
-     * process and mark newly updated firmware image as active. For production cases,
-     * please tune the checkpoint behavior per end application requirement.
-     */
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    esp_ota_img_states_t ota_state;
-    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
-        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
-            if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
-                ESP_LOGI(TAG, "App is valid, rollback cancelled successfully");
-            } else {
-                ESP_LOGE(TAG, "Failed to cancel rollback");
-            }
-        }
+    if (xTaskCreate(ota_task, "local_ota", 8192, NULL, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Cannot create OTA task");
+        abort();
     }
-#endif
-
-#if CONFIG_EXAMPLE_CONNECT_WIFI
-    /* Ensure to disable any WiFi power save mode, this allows best throughput
-     * and hence timings for overall OTA operation.
-     */
-    esp_wifi_set_ps(WIFI_PS_NONE);
-#endif // CONFIG_EXAMPLE_CONNECT_WIFI
-
-    xTaskCreate(&advanced_ota_example_task, "advanced_ota_example_task", 1024 * 8, NULL, 5, NULL);
 }

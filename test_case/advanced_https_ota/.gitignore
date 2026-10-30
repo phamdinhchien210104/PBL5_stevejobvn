@@ -1,0 +1,3 @@
+# Generated certificates, private keys and published firmware stay on this PC.
+.local/
+scripts/__pycache__/
