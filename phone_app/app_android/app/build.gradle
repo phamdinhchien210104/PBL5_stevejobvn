@@ -37,13 +37,14 @@ def localProperties = new Properties()
 localProperties.load(new FileInputStream(rootProject.file("local.properties")))
 
 android {
+    namespace 'com.espressif.rainmaker'
 
-    compileSdkVersion 30
+    compileSdkVersion 34
 
     defaultConfig {
         applicationId "com.espressif.rainmaker"
         minSdkVersion 23
-        targetSdkVersion 30
+        targetSdkVersion 34
         versionCode 50
         versionName "2.5.0 - ${getGitHash()}"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -137,7 +138,11 @@ android {
         }
     }
 
-    buildToolsVersion '29.0.3'
+    buildFeatures {
+        buildConfig true
+    }
+
+    buildToolsVersion '34.0.0'
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -187,13 +192,13 @@ dependencies {
     implementation 'com.aventrix.jnanoid:jnanoid:2.0.0'
     implementation 'com.github.yuriy-budiyev:code-scanner:2.1.0'
     implementation 'com.github.espressif:esp-idf-provisioning-android:lib-2.0.11'
-    implementation 'com.github.warkiz.tickseekbar:tickseekbar:0.1.4'
+    implementation 'com.github.warkiz:tickseekbar:37b1d67f64538c54a6be5a7337a3eb0a28ed1d34'
     implementation 'com.github.abdularis:TapHoldUpButton:0.1.2'
 
     // Room dependencies
-    def room_version = "2.3.0"
-    implementation "android.arch.persistence.room:runtime:$room_version"
-    annotationProcessor "android.arch.persistence.room:compiler:$room_version"
+    def room_version = "2.6.1"
+    implementation "androidx.room:room-runtime:$room_version"
+    annotationProcessor "androidx.room:room-compiler:$room_version"
 
     def work_version = "2.5.0"
     implementation "androidx.work:work-runtime:$work_version"
