@@ -25,6 +25,7 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.util.Log;
@@ -73,6 +74,7 @@ public class BLEProvisionLanding extends AppCompatActivity {
     // Request codes
     private static final int REQUEST_ENABLE_BT = 1;
     private static final int REQUEST_FINE_LOCATION = 2;
+    private static final int REQUEST_BLUETOOTH_PERMISSIONS = 3;
 
     // Time out
     private static final long DEVICE_CONNECT_TIMEOUT = 20000;
@@ -211,6 +213,28 @@ public class BLEProvisionLanding extends AppCompatActivity {
                 }
             }
             break;
+
+            case REQUEST_BLUETOOTH_PERMISSIONS: {
+                boolean allGranted = true;
+                if (grantResults.length > 0) {
+                    for (int result : grantResults) {
+                        if (result != PackageManager.PERMISSION_GRANTED) {
+                            allGranted = false;
+                            break;
+                        }
+                    }
+                } else {
+                    allGranted = false;
+                }
+
+                if (allGranted) {
+                    startScan();
+                } else {
+                    Toast.makeText(this, "Bluetooth permissions are required to scan for Smart Light devices", Toast.LENGTH_LONG).show();
+                    finish();
+                }
+            }
+            break;
         }
     }
 
@@ -306,12 +330,34 @@ public class BLEProvisionLanding extends AppCompatActivity {
             requestBluetoothEnable();
             return false;
 
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (!hasBluetoothPermissions()) {
+                requestBluetoothPermissions();
+                return false;
+            }
         } else if (!hasLocationPermissions()) {
 
             requestLocationPermission();
             return false;
         }
         return true;
+    }
+
+    private boolean hasBluetoothPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+                    && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+        }
+        return true;
+    }
+
+    private void requestBluetoothPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            requestPermissions(new String[]{
+                    Manifest.permission.BLUETOOTH_SCAN,
+                    Manifest.permission.BLUETOOTH_CONNECT
+            }, REQUEST_BLUETOOTH_PERMISSIONS);
+        }
     }
 
     private void requestBluetoothEnable() {
@@ -338,12 +384,16 @@ public class BLEProvisionLanding extends AppCompatActivity {
         deviceList.clear();
         bluetoothDevices.clear();
 
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+        boolean hasScanPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                ? ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+                : ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+
+        if (hasScanPermission) {
             provisionManager.searchBleEspDevices(deviceNamePrefix, bleScanListener);
             updateProgressAndScanBtn();
         } else {
-            Log.e(TAG, "Not able to start scan as Location permission is not granted.");
-            Toast.makeText(BLEProvisionLanding.this, "Please give location permission to start BLE scan", Toast.LENGTH_LONG).show();
+            Log.e(TAG, "Not able to start scan as required permission is not granted.");
+            Toast.makeText(BLEProvisionLanding.this, "Please grant required permissions to start BLE scan", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -351,12 +401,16 @@ public class BLEProvisionLanding extends AppCompatActivity {
 
         isScanning = false;
 
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+        boolean hasScanPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                ? ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+                : ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+
+        if (hasScanPermission) {
             provisionManager.stopBleScan();
             updateProgressAndScanBtn();
         } else {
-            Log.e(TAG, "Not able to stop scan as Location permission is not granted.");
-            Toast.makeText(BLEProvisionLanding.this, "Please give location permission to stop BLE scan", Toast.LENGTH_LONG).show();
+            Log.e(TAG, "Not able to stop scan as required permission is not granted.");
+            Toast.makeText(BLEProvisionLanding.this, "Please grant required permissions to stop BLE scan", Toast.LENGTH_LONG).show();
         }
 
         if (deviceList.size() <= 0) {
