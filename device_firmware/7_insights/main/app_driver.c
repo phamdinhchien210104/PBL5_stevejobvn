@@ -35,7 +35,7 @@ extern esp_rmaker_device_t *light_device;
 static void push_btn_cb(void *arg)
 {
     bool new_state = !g_output_state;
-    ESP_LOGI(TAG, "==> [Physical Button Click]: Toggling light %s", new_state ? "ON" : "OFF");
+    ESP_LOGW(TAG, "==> [Physical Button Click]: Toggling light to %s", new_state ? "ON" : "OFF");
     app_light_set_power(new_state);
 
     if (light_device) {
