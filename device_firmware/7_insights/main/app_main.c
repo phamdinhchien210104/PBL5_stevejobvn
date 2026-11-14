@@ -34,6 +34,7 @@
 #include "app_storage.h"
 #include "app_priv.h"
 #include "app_insights.h"
+#include "esp_diagnostics.h"
 
 static const char *TAG = "rainmaker_insight";
 
@@ -53,18 +54,22 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
     if (strcmp(param_name, ESP_RMAKER_DEF_POWER_NAME) == 0) {
         ESP_LOGW(TAG, "==> [LIGHT STATE CHANGED]: Power = %s (Device: %s)",
                 val.val.b ? "ON" : "OFF", device_name);
+        ESP_DIAG_EVENT("LIGHT_EVT", "Power switched %s", val.val.b ? "ON" : "OFF");
         app_light_set_power(val.val.b);
     } else if (strcmp(param_name, ESP_RMAKER_DEF_BRIGHTNESS_NAME) == 0) {
         ESP_LOGW(TAG, "==> [LIGHT BRIGHTNESS CHANGED]: Brightness = %d%% (Device: %s)",
                 val.val.i, device_name);
+        ESP_DIAG_EVENT("LIGHT_EVT", "Brightness set to %d%%", val.val.i);
         app_light_set_brightness(val.val.i);
     } else if (strcmp(param_name, ESP_RMAKER_DEF_HUE_NAME) == 0) {
         ESP_LOGW(TAG, "==> [LIGHT COLOR HUE CHANGED]: Hue = %d (Device: %s)",
                 val.val.i, device_name);
+        ESP_DIAG_EVENT("LIGHT_EVT", "Hue set to %d", val.val.i);
         app_light_set_hue(val.val.i);
     } else if (strcmp(param_name, ESP_RMAKER_DEF_SATURATION_NAME) == 0) {
         ESP_LOGW(TAG, "==> [LIGHT SATURATION CHANGED]: Saturation = %d (Device: %s)",
                 val.val.i, device_name);
+        ESP_DIAG_EVENT("LIGHT_EVT", "Saturation set to %d", val.val.i);
         app_light_set_saturation(val.val.i);
     } else {
         /* Silently ignoring invalid params */
@@ -158,6 +163,7 @@ void app_main(void)
 
     while (1) {
         ESP_LOGW(TAG, "[%02d] Hello world!", i++);
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        ESP_DIAG_EVENT("HEARTBEAT", "Periodic ping [%02d]", i);
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }

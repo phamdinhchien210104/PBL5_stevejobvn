@@ -21,6 +21,7 @@
 #include "esp_rmaker_utils.h"
 
 #include "light_driver.h"
+#include "esp_diagnostics.h"
 #include DEVELOPMENT_BOARD
 #include "app_priv.h"
 
@@ -36,6 +37,7 @@ static void push_btn_cb(void *arg)
 {
     bool new_state = !g_output_state;
     ESP_LOGW(TAG, "==> [Physical Button Click]: Toggling light to %s", new_state ? "ON" : "OFF");
+    ESP_DIAG_EVENT("BTN_EVT", "Physical Button clicked -> Light %s", new_state ? "ON" : "OFF");
     app_light_set_power(new_state);
 
     if (light_device) {
