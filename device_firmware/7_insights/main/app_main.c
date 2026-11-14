@@ -1,4 +1,4 @@
-/* ESP32-C3 Light Example
+/* ESP32 Light & Insights Example
 
    This example code is in the Public Domain (or CC0 licensed, at your option.)
 
@@ -74,11 +74,11 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
     return ESP_OK;
 }
 
-void app_main()
+void app_main(void)
 {
     int i = 0;
     esp_err_t err = ESP_OK;
-    ESP_LOGE(TAG, "app_main");
+    ESP_LOGI(TAG, "Starting RainMaker & ESP-Insights application...");
 
     /**
      * @brief NVS Flash initialization
@@ -132,14 +132,10 @@ void app_main()
     };
     esp_rmaker_ota_enable(&ota_config, OTA_USING_PARAMS);
 
-    /* Enable timezone service which will be require for setting appropriate timezone
-     * from the phone apps for scheduling to work correctly.
-     * For more information on the various ways of setting timezone, please check
-     * https://rainmaker.espressif.com/docs/time-service.html.
-     */
+    /* Enable timezone service */
     esp_rmaker_timezone_service_enable();
 
-    /* Enable scheduling. */
+    /* Enable scheduling */
     esp_rmaker_schedule_enable();
 
     /* Enable Insights. Requires CONFIG_ESP_INSIGHTS_ENABLED=y */
