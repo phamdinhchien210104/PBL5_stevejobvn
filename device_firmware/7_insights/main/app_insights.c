@@ -11,7 +11,7 @@
 
 static const char *TAG = "app_insights";
 
-#define APP_INSIGHTS_LOG_TYPE (ESP_DIAG_LOG_TYPE_ERROR | ESP_DIAG_LOG_TYPE_WARNING | ESP_DIAG_LOG_TYPE_EVENT | ESP_DIAG_LOG_TYPE_LOG)
+#define APP_INSIGHTS_LOG_TYPE (ESP_DIAG_LOG_TYPE_ERROR | ESP_DIAG_LOG_TYPE_WARNING | ESP_DIAG_LOG_TYPE_EVENT)
 
 static void rmaker_common_event_handler(void* arg, esp_event_base_t event_base,
                                         int32_t event_id, void* event_data)
