@@ -60,6 +60,16 @@ static esp_err_t write_cb(const esp_rmaker_device_t *device, const esp_rmaker_pa
         ESP_LOGW(TAG, "==> [LIGHT BRIGHTNESS CHANGED]: Brightness = %d%% (Device: %s)",
                 val.val.i, device_name);
         ESP_DIAG_EVENT("LIGHT_EVT", "Brightness set to %d%%", val.val.i);
+
+        /* Warning khi độ sáng dưới 20% hoặc đạt mức tối đa (100%) */
+        if (val.val.i < 20) {
+            ESP_LOGW(TAG, "⚠️ [WARNING]: Light brightness is very low (%d%% < 20%%)!", val.val.i);
+            ESP_DIAG_EVENT("BRIGHTNESS_WARN", "WARNING: Brightness is very low at %d%% (< 20%%)", val.val.i);
+        } else if (val.val.i >= 100) {
+            ESP_LOGW(TAG, "⚠️ [WARNING]: Light brightness reached MAXIMUM (100%%)!");
+            ESP_DIAG_EVENT("BRIGHTNESS_WARN", "WARNING: Brightness reached MAXIMUM (100%%)");
+        }
+
         app_light_set_brightness(val.val.i);
     } else if (strcmp(param_name, ESP_RMAKER_DEF_HUE_NAME) == 0) {
         ESP_LOGW(TAG, "==> [LIGHT COLOR HUE CHANGED]: Hue = %d (Device: %s)",
